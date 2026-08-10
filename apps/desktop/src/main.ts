@@ -1,10 +1,13 @@
 /**
- * Placeholder settings UI.
+ * Entry point for both windows.
  *
- * Enough to prove the IPC round-trip and the event stream work end to end.
- * Replace with a real settings pane; keep the rule that this layer only renders
- * what the core reports and never decides anything itself.
+ * One bundle serves the settings window and the floating widget; which one to
+ * render is decided by the window label. That avoids a multi-page Vite build
+ * for what is currently two small views.
  */
+import { getCurrentWindow } from "@tauri-apps/api/window";
+
+import "./styles.css";
 import {
   getConfig,
   getState,
@@ -14,6 +17,7 @@ import {
   permissionsGranted,
   type EngineEvent,
 } from "./engine";
+import { mountWidget } from "./widget";
 
 function root(): HTMLElement {
   const app = document.querySelector<HTMLElement>("#app");
@@ -21,13 +25,22 @@ function root(): HTMLElement {
   return app;
 }
 
-const log = (line: string) => {
-  const entry = document.createElement("div");
-  entry.textContent = line;
-  root().append(entry);
-};
+/**
+ * Placeholder settings pane.
+ *
+ * Enough to prove the IPC round-trip and the event stream work end to end.
+ * Keep the rule that this layer only renders what the core reports and never
+ * decides anything itself.
+ */
+async function mountSettings(app: HTMLElement) {
+  app.className = "settings";
 
-async function main() {
+  const log = (line: string) => {
+    const entry = document.createElement("div");
+    entry.textContent = line;
+    app.append(entry);
+  };
+
   const [state, config, granted] = await Promise.all([
     getState(),
     getConfig(),
@@ -43,7 +56,7 @@ async function main() {
     const button = document.createElement("button");
     button.textContent = "Open permission settings";
     button.addEventListener("click", () => void openPermissionSettings());
-    root().append(button);
+    app.append(button);
   }
 
   await onEngineEvent((event: EngineEvent) => {
@@ -66,4 +79,8 @@ async function main() {
   });
 }
 
-void main();
+if (getCurrentWindow().label === "widget") {
+  mountWidget(root());
+} else {
+  void mountSettings(root());
+}

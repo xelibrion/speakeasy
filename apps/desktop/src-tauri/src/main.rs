@@ -11,6 +11,7 @@ mod bridge;
 mod commands;
 mod hotkey;
 mod tray;
+mod widget;
 
 use speakeasy_core::{Config, Engine};
 use speakeasy_platform::CpalAudioSource;

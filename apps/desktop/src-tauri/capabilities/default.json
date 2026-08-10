@@ -1,8 +1,8 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Permissions for the settings window. Add \"widget\" here when the transcription widget window exists.",
-  "windows": ["settings"],
+  "description": "Permissions for the settings window and the floating status widget.",
+  "windows": ["settings", "widget"],
   "permissions": [
     "core:default",
     "core:event:default",

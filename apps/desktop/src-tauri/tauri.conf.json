@@ -18,11 +18,26 @@
         "height": 640,
         "resizable": true,
         "visible": false
+      },
+      {
+        "label": "widget",
+        "title": "Speakeasy status",
+        "width": 260,
+        "height": 68,
+        "resizable": false,
+        "visible": false,
+        "decorations": false,
+        "transparent": true,
+        "shadow": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "focus": false
       }
     ],
     "security": {
       "csp": "default-src 'self'"
     },
+    "macOSPrivateApi": true,
     "trayIcon": {
       "iconPath": "icons/tray.png",
       "iconAsTemplate": true

@@ -28,7 +28,8 @@ cpal = "0.15"
 rubato = "0.15"
 whisper-rs = "0.14"
 
-tauri = { version = "2", features = ["tray-icon"] }
+# macos-private-api is required for the transparent status widget.
+tauri = { version = "2", features = ["tray-icon", "macos-private-api"] }
 tauri-build = "2"
 
 x11rb = "0.13"

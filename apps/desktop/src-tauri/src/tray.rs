@@ -65,6 +65,8 @@ pub fn attach(app: &AppHandle, engine: &Engine) -> Result<(), Box<dyn std::error
 }
 
 /// Rewrite the status line after an engine transition.
+///
+/// Call on the main thread, like everything else that touches AppKit.
 pub fn refresh(state: &State) {
     if let Some(item) = STATUS_ITEM
         .lock()
