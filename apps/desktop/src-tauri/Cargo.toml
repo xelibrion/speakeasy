@@ -1,0 +1,23 @@
+[package]
+name = "speakeasy-desktop"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# The replaceable shell: tray, windows, IPC. A SwiftUI shell would sit here
+# instead, against the same three crates below. Keep logic out of this crate —
+# if a command body is more than a delegation, it belongs in the core.
+[dependencies]
+speakeasy-core = { workspace = true }
+speakeasy-platform = { workspace = true }
+speakeasy-whisper = { workspace = true }
+
+tauri = { workspace = true }
+tauri-plugin-global-shortcut = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[build-dependencies]
+tauri-build = { workspace = true }

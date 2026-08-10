@@ -1,0 +1,19 @@
+[package]
+name = "speakeasy-whisper"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# Isolated from the core so that the whisper.cpp C++ build — and its long
+# compile — stays out of `cargo test -p speakeasy-core`.
+[dependencies]
+speakeasy-core = { workspace = true }
+whisper-rs = { workspace = true }
+tracing = { workspace = true }
+
+[features]
+default = []
+# Metal + CoreML acceleration on Apple silicon.
+metal = ["whisper-rs/metal"]
+coreml = ["whisper-rs/coreml"]
+cuda = ["whisper-rs/cuda"]

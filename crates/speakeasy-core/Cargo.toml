@@ -1,0 +1,20 @@
+[package]
+name = "speakeasy-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# INVARIANT: this crate must never depend on tauri, cpal, whisper-rs, or any
+# OS-specific crate. It owns the ports and the state machine; everything else
+# plugs in. `make boundary` enforces the tauri half of this.
+[dependencies]
+serde = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[features]
+# Test doubles for the ports, so shells and integration tests can run headless.
+fakes = []
+
+[dev-dependencies]
+speakeasy-core = { path = ".", features = ["fakes"] }

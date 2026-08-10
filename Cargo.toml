@@ -1,0 +1,41 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/speakeasy-core",
+    "crates/speakeasy-platform",
+    "crates/speakeasy-whisper",
+    "apps/desktop/src-tauri",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+# Single place to pin versions. See README "Unverified versions" before first build.
+[workspace.dependencies]
+speakeasy-core = { path = "crates/speakeasy-core" }
+speakeasy-platform = { path = "crates/speakeasy-platform" }
+speakeasy-whisper = { path = "crates/speakeasy-whisper" }
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+cpal = "0.15"
+rubato = "0.15"
+whisper-rs = "0.14"
+
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-build = "2"
+tauri-plugin-global-shortcut = "2"
+
+x11rb = "0.13"
+core-graphics = "0.24"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true

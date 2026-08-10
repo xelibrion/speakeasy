@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Without this key the process is killed the moment it touches the
+         microphone. The string is shown verbatim in the TCC prompt. -->
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Speakeasy records your voice while you hold the dictation key, and transcribes it on this device.</string>
+
+    <!-- Menu-bar only: no Dock icon, no app switcher entry. -->
+    <key>LSUIElement</key>
+    <true/>
+</dict>
+</plist>
