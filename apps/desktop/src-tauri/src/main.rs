@@ -88,6 +88,7 @@ fn main() {
     .persisting_to(settings);
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .manage(engine.clone())
         .setup(move |app| {
             // Accessory, not Regular: no Dock icon, no app switcher entry, and

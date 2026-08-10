@@ -27,6 +27,8 @@ export type ErrorKind =
   | "InputPermissionDenied"
   | "SecureInputActive"
   | "ModelNotLoaded"
+  | "ModelDownload"
+  | "ModelVerification"
   | "Transcription"
   | "Injection"
   | "Hotkey"
@@ -50,6 +52,8 @@ const ERROR_LABELS: Record<ErrorKind, string> = {
   InputPermissionDenied: "Accessibility access denied",
   SecureInputActive: "A password field is blocking input",
   ModelNotLoaded: "No speech model loaded",
+  ModelDownload: "Could not download the model",
+  ModelVerification: "The download was corrupted — try again",
   Transcription: "Transcription failed",
   Injection: "Could not insert the text",
   Hotkey: "Hotkey is not bound",
@@ -67,7 +71,37 @@ export type EngineEvent =
   | { type: "audioLevel"; level: number }
   | { type: "transcript"; text: string }
   | { type: "injected"; chars: number }
-  | { type: "failed"; error: EngineError };
+  | { type: "failed"; error: EngineError }
+  | { type: "modelStatusChanged"; status: ModelStatus };
+
+/** A catalog id such as `"base.en"`. See `core::models::ModelId`. */
+export type ModelId = string;
+
+/** Where the weights come from. See `core::config::ModelChoice`. */
+export type ModelChoice = { kind: "catalog"; id: ModelId } | { kind: "local"; path: string };
+
+/** One downloadable model. See `core::models::ModelInfo`. */
+export type ModelInfo = {
+  id: ModelId;
+  label: string;
+  note: string;
+  bytes: number;
+  sha256: string;
+  url: string;
+  englishOnly: boolean;
+};
+
+/**
+ * What the model subsystem is doing. See `core::event::ModelStatus`.
+ *
+ * Separate from `State` because the two run concurrently: a download can be in
+ * flight while the user dictates on the model they already have.
+ */
+export type ModelStatus =
+  | { status: "absent" }
+  | { status: "downloading"; id: ModelId; received: number; total: number }
+  | { status: "ready"; label: string }
+  | { status: "failed"; error: EngineError };
 
 export type InjectionMode = "synthetic" | "paste";
 
@@ -96,7 +130,7 @@ export type WidgetPosition = { x: number; y: number };
 export type Config = {
   hotkey: Hotkey;
   activation: ActivationMode;
-  modelPath: string | null;
+  model: ModelChoice;
   language: string | null;
   injectionMode: InjectionMode;
   minRecordingMs: number;
@@ -151,6 +185,27 @@ export const getAudioSpectrum = () => invoke<number[]>("audio_spectrum");
 export const cancel = () => invoke<void>("cancel");
 export const permissionsGranted = () => invoke<boolean>("permissions_granted");
 export const openPermissionSettings = () => invoke<void>("open_permission_settings");
+
+export const getModelCatalog = () => invoke<ModelInfo[]>("model_catalog");
+export const getModelStatus = () => invoke<ModelStatus>("model_status");
+export const getInstalledModels = () => invoke<ModelId[]>("installed_models");
+export const installModel = (id: ModelId) => invoke<void>("install_model", { id });
+export const selectModel = (choice: ModelChoice) => invoke<void>("select_model", { choice });
+export const cancelModelDownload = () => invoke<void>("cancel_model_download");
+export const removeModel = (id: ModelId) => invoke<void>("remove_model", { id });
+
+/**
+ * "488 MB" — decimal megabytes, which is how these models are advertised and
+ * what makes the number match what the user reads elsewhere.
+ */
+export function formatBytes(bytes: number): string {
+  return `${Math.round(bytes / 1_000_000)} MB`;
+}
+
+/** Whether `choice` names this catalog entry. */
+export function isSelected(choice: ModelChoice, id: ModelId): boolean {
+  return choice.kind === "catalog" && choice.id === id;
+}
 
 export function onEngineEvent(handler: (event: EngineEvent) => void): Promise<UnlistenFn> {
   return listen<EngineEvent>(EVENT, ({ payload }) => handler(payload));
