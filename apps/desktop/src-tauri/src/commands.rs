@@ -29,6 +29,11 @@ pub fn audio_level(engine: TauriState<'_, Engine>) -> f32 {
 }
 
 #[tauri::command]
+pub fn audio_spectrum(engine: TauriState<'_, Engine>) -> Vec<f32> {
+    engine.audio_spectrum()
+}
+
+#[tauri::command]
 pub fn cancel(engine: TauriState<'_, Engine>) {
     engine.cancel();
 }

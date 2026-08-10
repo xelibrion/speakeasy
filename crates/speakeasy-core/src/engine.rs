@@ -7,7 +7,9 @@ use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use crate::config::{ActivationMode, Config};
+use std::path::PathBuf;
+
+use crate::config::{ActivationMode, Config, WidgetPosition};
 use crate::error::{Error, Result};
 use crate::event::{Event, State};
 use crate::ports::{AudioSource, HotkeyEvent, TextSink, Transcriber};
@@ -36,6 +38,9 @@ struct Inner {
     transcriber: Box<dyn Transcriber>,
     sink: Box<dyn TextSink>,
     config: Mutex<Config>,
+    /// Where to persist config changes. `None` keeps the engine in memory only,
+    /// which is what the tests want.
+    config_path: Mutex<Option<PathBuf>>,
     state: Mutex<State>,
     started_at: Mutex<Option<Instant>>,
     subscribers: Mutex<Vec<Sender<Event>>>,
@@ -54,6 +59,7 @@ impl Engine {
                 transcriber,
                 sink,
                 config: Mutex::new(config),
+                config_path: Mutex::new(None),
                 state: Mutex::new(State::Idle),
                 started_at: Mutex::new(None),
                 subscribers: Mutex::new(Vec::new()),
@@ -89,8 +95,52 @@ impl Engine {
             .clone()
     }
 
+    /// Persist every subsequent config change to `path`. Chained onto `new` so
+    /// the constructor stays the same shape for tests and headless shells.
+    pub fn persisting_to(self, path: PathBuf) -> Self {
+        *self
+            .inner
+            .config_path
+            .lock()
+            .expect("config path mutex poisoned") = Some(path);
+        self
+    }
+
     pub fn set_config(&self, config: Config) {
         *self.inner.config.lock().expect("config mutex poisoned") = config;
+        self.persist();
+    }
+
+    /// Remember where the user dragged the status widget.
+    ///
+    /// Its own method rather than a `set_config` round-trip: the shell learns
+    /// about a move from a window event, and reading, mutating and writing back
+    /// the whole config from there would race with the settings window.
+    pub fn set_widget_position(&self, position: WidgetPosition) {
+        {
+            let mut config = self.inner.config.lock().expect("config mutex poisoned");
+            if config.widget_position == Some(position) {
+                return; // our own set_position echoing back; nothing to write
+            }
+            config.widget_position = Some(position);
+        }
+        self.persist();
+    }
+
+    /// Best-effort: a config that cannot be written is worth a warning, not a
+    /// failed dictation.
+    fn persist(&self) {
+        let path = self
+            .inner
+            .config_path
+            .lock()
+            .expect("config path mutex poisoned")
+            .clone();
+        let Some(path) = path else { return };
+
+        if let Err(err) = self.config().save(&path) {
+            tracing::warn!(%err, path = %path.display(), "could not save config");
+        }
     }
 
     /// Interpret a hotkey edge. Cheap and non-blocking; the caller performs the
@@ -235,6 +285,12 @@ impl Engine {
     /// Current input level, for the recording indicator.
     pub fn audio_level(&self) -> f32 {
         self.inner.audio.level()
+    }
+
+    /// Current per-band energy, for a spectrum display. See
+    /// [`crate::ports::AudioSource::spectrum`].
+    pub fn audio_spectrum(&self) -> Vec<f32> {
+        self.inner.audio.spectrum()
     }
 
     fn transition(&self, next: State) {

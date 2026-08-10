@@ -26,6 +26,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 cpal = "0.15"
 rubato = "0.15"
+# Already in the tree via rubato; named here because the spectrum display uses
+# it directly rather than by accident.
+realfft = "3"
 whisper-rs = "0.14"
 
 # macos-private-api is required for the transparent status widget.

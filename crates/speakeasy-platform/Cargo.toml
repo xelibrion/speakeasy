@@ -10,6 +10,7 @@ license.workspace = true
 speakeasy-core = { workspace = true }
 cpal = { workspace = true }
 rubato = { workspace = true }
+realfft = { workspace = true }
 tracing = { workspace = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]

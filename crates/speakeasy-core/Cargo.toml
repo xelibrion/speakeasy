@@ -9,6 +9,8 @@ license.workspace = true
 # plugs in. `make boundary` enforces the tauri half of this.
 [dependencies]
 serde = { workspace = true }
+# Config is read and written as JSON. Still no OS or shell dependency.
+serde_json = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 

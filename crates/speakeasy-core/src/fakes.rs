@@ -62,6 +62,17 @@ impl AudioSource for FakeAudio {
             0.0
         }
     }
+
+    /// A fixed tilt rather than a flat 0.5, so a test can tell band order from
+    /// the values alone.
+    fn spectrum(&self) -> Vec<f32> {
+        if !self.is_recording() {
+            return vec![0.0; crate::SPECTRUM_BANDS];
+        }
+        (0..crate::SPECTRUM_BANDS)
+            .map(|band| 1.0 - band as f32 / crate::SPECTRUM_BANDS as f32)
+            .collect()
+    }
 }
 
 /// Returns a fixed transcript, ignoring the audio.

@@ -28,9 +28,12 @@ pub fn forward_events(app: AppHandle, engine: Engine) {
                 // ("Must only be used from the main thread").
                 let state = state.clone();
                 let ui = app.clone();
+                // Read on this thread: the main thread must not block on the
+                // engine's config lock.
+                let saved = engine.config().widget_position;
                 if let Err(err) = app.run_on_main_thread(move || {
                     tray::refresh(&state);
-                    widget::sync(&ui, &state);
+                    widget::sync(&ui, &state, saved);
                 }) {
                     tracing::warn!(%err, "could not schedule the UI update");
                 }

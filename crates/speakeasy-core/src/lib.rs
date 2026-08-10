@@ -21,7 +21,7 @@ pub mod ports;
 #[cfg(feature = "fakes")]
 pub mod fakes;
 
-pub use config::{ActivationMode, Config, Hotkey, InjectionMode, ModifierKey};
+pub use config::{ActivationMode, Config, Hotkey, InjectionMode, ModifierKey, WidgetPosition};
 pub use engine::{Engine, HotkeyAction};
 pub use error::{Error, Result};
 pub use event::{Event, State};
@@ -29,3 +29,10 @@ pub use ports::{AudioSource, HotkeyCallback, HotkeyEvent, HotkeyListener, TextSi
 
 /// Sample rate every [`Transcriber`] implementation expects.
 pub const TARGET_SAMPLE_RATE: u32 = 16_000;
+
+/// Number of bands in [`AudioSource::spectrum`].
+///
+/// Fixed rather than a parameter so the shell and the platform layer cannot
+/// disagree about the length of the slice they are passing around. Twelve reads
+/// as an equaliser at the width the widget has to spare.
+pub const SPECTRUM_BANDS: usize = 12;

@@ -90,6 +90,9 @@ export type Hotkey =
 /** Hold the key, or tap it twice. See `core::config::ActivationMode`. */
 export type ActivationMode = "pushToTalk" | "toggle";
 
+/** Physical screen pixels. See `core::config::WidgetPosition`. */
+export type WidgetPosition = { x: number; y: number };
+
 export type Config = {
   hotkey: Hotkey;
   activation: ActivationMode;
@@ -97,6 +100,7 @@ export type Config = {
   language: string | null;
   injectionMode: InjectionMode;
   minRecordingMs: number;
+  widgetPosition: WidgetPosition | null;
 };
 
 const MODIFIER_LABELS: Record<ModifierKey, string> = {
@@ -121,12 +125,29 @@ export function activationLabel(config: Config): string {
   return config.activation === "toggle" ? `tap ${key} to start and stop` : `hold ${key} to talk`;
 }
 
+/**
+ * What to tell the user while recording.
+ *
+ * Toggle mode needs this: nothing about a widget that appeared on its own says
+ * how to make it stop. Hold mode gets the matching line for symmetry, though
+ * there the answer is already in the user's fingers.
+ */
+export function stopHint(config: Config): string {
+  const key = hotkeyLabel(config.hotkey);
+  return config.activation === "toggle" ? `Tap ${key} to stop` : `Release ${key} to insert`;
+}
+
+/** Bands in `getAudioSpectrum`. Mirrors `core::SPECTRUM_BANDS`. */
+export const SPECTRUM_BANDS = 12;
+
 const EVENT = "speakeasy://event";
 
 export const getState = () => invoke<State>("state");
 export const getConfig = () => invoke<Config>("config");
 export const setConfig = (config: Config) => invoke<void>("set_config", { config });
 export const getAudioLevel = () => invoke<number>("audio_level");
+/** `SPECTRUM_BANDS` values, low frequency first. See `core::ports::AudioSource`. */
+export const getAudioSpectrum = () => invoke<number[]>("audio_spectrum");
 export const cancel = () => invoke<void>("cancel");
 export const permissionsGranted = () => invoke<boolean>("permissions_granted");
 export const openPermissionSettings = () => invoke<void>("open_permission_settings");

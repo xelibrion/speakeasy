@@ -7,14 +7,23 @@
 //! `Send + Sync`. Instead a dedicated thread owns the stream and takes
 //! commands over a channel; `start` and `stop` block on a reply so callers
 //! still see ordinary synchronous errors.
+//!
+//! This module is the device: opening streams, downmixing, and handing samples
+//! on. What those samples *mean* to the UI lives in [`spectrum`], and rate
+//! conversion in [`resample`].
+
+mod resample;
+mod spectrum;
 
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
 use std::sync::{Arc, Mutex};
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::SampleFormat;
-use rubato::{FftFixedIn, Resampler};
 use speakeasy_core::{AudioSource, Error, Result, TARGET_SAMPLE_RATE};
+
+use resample::resample;
+use spectrum::{Analyzer, WINDOW};
 
 #[derive(Default)]
 struct Capture {
@@ -33,6 +42,8 @@ enum Command {
 pub struct CpalAudioSource {
     capture: Arc<Mutex<Capture>>,
     commands: SyncSender<Command>,
+    /// Its own lock, so analysing a window never blocks the audio callback.
+    analyzer: Mutex<Analyzer>,
 }
 
 impl CpalAudioSource {
@@ -51,6 +62,7 @@ impl CpalAudioSource {
         Ok(Self {
             capture,
             commands: tx,
+            analyzer: Mutex::new(Analyzer::new()),
         })
     }
 }
@@ -190,6 +202,11 @@ impl AudioSource for CpalAudioSource {
         guard.level = 0.0;
         drop(guard);
 
+        self.analyzer
+            .lock()
+            .expect("analyzer mutex poisoned")
+            .reset();
+
         if rate == 0 || rate == TARGET_SAMPLE_RATE || samples.is_empty() {
             return Ok(samples);
         }
@@ -199,38 +216,20 @@ impl AudioSource for CpalAudioSource {
     fn level(&self) -> f32 {
         self.capture.lock().expect("capture mutex poisoned").level
     }
-}
 
-/// Resample mono f32 from `from_rate` to `to_rate`.
-///
-/// Band-limited rather than naive decimation: dropping samples from 48 kHz
-/// aliases speech energy back down into the range whisper cares about.
-fn resample(samples: &[f32], from_rate: u32, to_rate: u32) -> Result<Vec<f32>> {
-    const CHUNK: usize = 1024;
+    fn spectrum(&self) -> Vec<f32> {
+        // Copy the tail out and release the capture lock before transforming
+        // it: the audio callback takes this same lock on every buffer, and it
+        // must never wait on an FFT.
+        let (tail, rate) = {
+            let guard = self.capture.lock().expect("capture mutex poisoned");
+            let start = guard.samples.len().saturating_sub(WINDOW);
+            (guard.samples[start..].to_vec(), guard.native_rate)
+        };
 
-    let mut resampler = FftFixedIn::<f32>::new(from_rate as usize, to_rate as usize, CHUNK, 2, 1)
-        .map_err(|err| {
-        Error::AudioUnavailable(format!("could not build the resampler: {err}"))
-    })?;
-
-    let mut out = Vec::with_capacity(samples.len() * to_rate as usize / from_rate as usize + CHUNK);
-    let mut cursor = 0;
-
-    while cursor + CHUNK <= samples.len() {
-        let frames = resampler
-            .process(&[&samples[cursor..cursor + CHUNK]], None)
-            .map_err(|err| Error::AudioUnavailable(format!("resampling failed: {err}")))?;
-        out.extend_from_slice(&frames[0]);
-        cursor += CHUNK;
+        self.analyzer
+            .lock()
+            .expect("analyzer mutex poisoned")
+            .analyze(&tail, rate)
     }
-
-    // Flush the tail, which is shorter than a chunk.
-    if cursor < samples.len() {
-        let frames = resampler
-            .process_partial(Some(&[&samples[cursor..]]), None)
-            .map_err(|err| Error::AudioUnavailable(format!("resampling the tail failed: {err}")))?;
-        out.extend_from_slice(&frames[0]);
-    }
-
-    Ok(out)
 }

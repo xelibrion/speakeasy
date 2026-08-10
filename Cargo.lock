@@ -3312,6 +3312,7 @@ name = "speakeasy-core"
 version = "0.1.0"
 dependencies = [
  "serde",
+ "serde_json",
  "speakeasy-core",
  "thiserror 2.0.20",
  "tracing",
@@ -3339,6 +3340,7 @@ dependencies = [
  "core-foundation",
  "core-graphics 0.24.0",
  "cpal",
+ "realfft",
  "rubato",
  "speakeasy-core",
  "tracing",

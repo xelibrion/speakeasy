@@ -7,23 +7,67 @@
 //! make Speakeasy paste into its own window. Hence `focus: false` in the config,
 //! `set_focusable(false)` here, and `show()` without `set_focus()`.
 //!
-//! It also ignores the cursor, so it cannot swallow a click meant for whatever
-//! is underneath.
+//! It is draggable, which is in tension with that: accepting a click means the
+//! pill can swallow one meant for the window underneath, and the widget is only
+//! on screen *during* a dictation. `set_focusable(false)` is what keeps the drag
+//! from making Speakeasy the active app and redirecting the user's text. The
+//! pill is small and parks out of the way, which is the rest of the mitigation.
 
-use speakeasy_core::State;
-use tauri::{AppHandle, Manager, PhysicalPosition, WebviewWindow};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
+use std::time::Duration;
+
+use speakeasy_core::{Engine, State, WidgetPosition};
+use tauri::{AppHandle, Manager, PhysicalPosition, WebviewWindow, WindowEvent};
 
 pub const LABEL: &str = "widget";
 
 /// Gap between the widget and the bottom of the screen, in logical pixels.
 const BOTTOM_MARGIN: f64 = 120.0;
 
+/// How long the widget must sit still before its position is written to disk.
+/// A drag emits a `Moved` per frame; without this, so would the config file.
+const SETTLE: Duration = Duration::from_millis(600);
+
+/// Bumped on every move. A pending save that finds it changed knows a newer
+/// move is already waiting and drops out, so a drag costs exactly one write.
+static MOVES: AtomicU64 = AtomicU64::new(0);
+
+/// Persist the widget's position after the user drags it.
+pub fn remember_moves(app: &AppHandle, engine: &Engine) {
+    let Some(window) = app.get_webview_window(LABEL) else {
+        tracing::warn!("no window labelled `{LABEL}`; positions will not be remembered");
+        return;
+    };
+
+    let engine = Arc::new(engine.clone());
+    window.on_window_event(move |event| {
+        let WindowEvent::Moved(position) = event else {
+            return;
+        };
+        let position = WidgetPosition {
+            x: position.x,
+            y: position.y,
+        };
+
+        let move_id = MOVES.fetch_add(1, Ordering::SeqCst) + 1;
+        let engine = Arc::clone(&engine);
+        std::thread::spawn(move || {
+            std::thread::sleep(SETTLE);
+            if MOVES.load(Ordering::SeqCst) == move_id {
+                // No-ops when this was our own `set_position` echoing back.
+                engine.set_widget_position(position);
+            }
+        });
+    });
+}
+
 /// Show or hide the widget to match engine state.
 ///
 /// **Must be called on the main thread.** It touches NSWindow, and AppKit traps
 /// the process rather than misbehaving if you call it from anywhere else. The
 /// event bridge hops threads before calling this.
-pub fn sync(app: &AppHandle, state: &State) {
+pub fn sync(app: &AppHandle, state: &State, saved: Option<WidgetPosition>) {
     let Some(window) = app.get_webview_window(LABEL) else {
         tracing::warn!("no window labelled `{LABEL}`");
         return;
@@ -34,7 +78,7 @@ pub fn sync(app: &AppHandle, state: &State) {
     let visible = !matches!(state, State::Idle);
 
     let result = if visible {
-        position(&window)
+        position(&window, saved)
             .and_then(|()| {
                 #[cfg(target_os = "macos")]
                 make_overlay(&window)?;
@@ -106,18 +150,27 @@ fn make_overlay(window: &WebviewWindow) -> tauri::Result<()> {
     Ok(())
 }
 
-/// Park the widget bottom-centre of the active monitor.
+/// Put the widget where the user left it, or bottom-centre of the active
+/// monitor if they never moved it.
 ///
-/// Recomputed on every show rather than once, so it follows the user between
-/// displays and survives resolution changes.
-fn position(window: &WebviewWindow) -> tauri::Result<()> {
+/// The default is recomputed on every show rather than once, so it follows the
+/// user between displays and survives resolution changes. A saved position is
+/// used as-is: second-guessing it is how a deliberately-placed widget creeps
+/// back to the middle.
+fn position(window: &WebviewWindow, saved: Option<WidgetPosition>) -> tauri::Result<()> {
     window.set_focusable(false)?;
-    window.set_ignore_cursor_events(true)?;
+    // Dragging needs clicks, so this cannot be true. See the module docs for
+    // what that costs and why `set_focusable(false)` is what makes it safe.
+    window.set_ignore_cursor_events(false)?;
     window.set_always_on_top(true)?;
     // Without this the widget never appears over a fullscreen app, because
     // macOS confines ordinary windows to their own Space — and dictating into
     // a fullscreen editor or browser is a normal thing to want.
     window.set_visible_on_all_workspaces(true)?;
+
+    if let Some(saved) = saved {
+        return window.set_position(PhysicalPosition::new(saved.x, saved.y));
+    }
 
     let Some(monitor) = window.current_monitor()? else {
         return Ok(()); // no monitor info; leave it wherever it is

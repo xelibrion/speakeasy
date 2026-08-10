@@ -17,13 +17,35 @@ use speakeasy_core::{Config, Engine};
 use speakeasy_platform::CpalAudioSource;
 use speakeasy_whisper::WhisperTranscriber;
 
-/// Config source, until a settings file exists: defaults, with the model path
-/// overridable from the environment so the pipeline can be exercised without a
-/// settings UI.
-fn load_config() -> Config {
-    let mut config = Config::default();
-    if let Ok(path) = std::env::var("SPEAKEASY_MODEL") {
-        config.model_path = Some(path);
+/// Config file location. Under the OS config directory rather than next to the
+/// binary, so it survives reinstalling the app.
+fn config_path() -> std::path::PathBuf {
+    let base = std::env::var_os("XDG_CONFIG_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("HOME").map(|home| {
+                std::path::PathBuf::from(home)
+                    .join("Library")
+                    .join("Application Support")
+            })
+        })
+        .unwrap_or_else(std::env::temp_dir);
+    base.join("com.speakeasy.app").join("config.json")
+}
+
+/// Settings file, with the model path still overridable from the environment
+/// so the pipeline can be exercised without touching the file.
+///
+/// A file that cannot be read falls back to defaults rather than refusing to
+/// start: a menu-bar app that dies on a bad config leaves the user no UI to fix
+/// it with.
+fn load_config(path: &std::path::Path) -> Config {
+    let mut config = Config::load(path).unwrap_or_else(|err| {
+        tracing::warn!(%err, "could not read the config; starting from defaults");
+        Config::default()
+    });
+    if let Ok(model) = std::env::var("SPEAKEASY_MODEL") {
+        config.model_path = Some(model);
     }
     config
 }
@@ -36,7 +58,8 @@ fn main() {
         )
         .init();
 
-    let config = load_config();
+    let settings = config_path();
+    let config = load_config(&settings);
 
     let audio = CpalAudioSource::new().expect("audio source should be constructible");
     // Loading weights takes seconds and can fail; an unloaded transcriber is a
@@ -56,7 +79,8 @@ fn main() {
     };
     let sink = speakeasy_platform::text_sink(&config);
 
-    let engine = Engine::new(Box::new(audio), Box::new(transcriber), sink, config.clone());
+    let engine = Engine::new(Box::new(audio), Box::new(transcriber), sink, config.clone())
+        .persisting_to(settings);
 
     tauri::Builder::default()
         .manage(engine.clone())
@@ -64,6 +88,7 @@ fn main() {
             // Core events → webview events. The only place the two worlds meet.
             bridge::forward_events(app.handle().clone(), engine.clone());
             tray::attach(app.handle(), &engine)?;
+            widget::remember_moves(app.handle(), &engine);
             // A failure here is usually a missing Accessibility grant. Log it
             // and keep running: the tray still works, and the settings window
             // is where the user is told what to fix.
@@ -77,6 +102,7 @@ fn main() {
             commands::config,
             commands::set_config,
             commands::audio_level,
+            commands::audio_spectrum,
             commands::cancel,
             commands::permissions_granted,
             commands::open_permission_settings,

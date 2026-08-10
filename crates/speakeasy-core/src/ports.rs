@@ -24,6 +24,16 @@ pub trait AudioSource: Send + Sync {
     /// Rolling input level in 0.0..=1.0, for the recording indicator.
     /// Returns 0.0 when not recording.
     fn level(&self) -> f32;
+
+    /// Per-band energy of the last moment of audio, for a spectrum display.
+    ///
+    /// Exactly [`crate::SPECTRUM_BANDS`] values in 0.0..=1.0, low frequency
+    /// first, log-spaced across the speech range. All zeros when not recording.
+    ///
+    /// Separate from [`AudioSource::level`] because the two answer different
+    /// questions — "how loud" versus "how does it sound" — and a caller drawing
+    /// bars wants the second without paying for the first.
+    fn spectrum(&self) -> Vec<f32>;
 }
 
 /// Speech-to-text over a complete utterance.

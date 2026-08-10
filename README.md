@@ -95,6 +95,46 @@ toggle mode the release edge is dropped and a press arriving while transcription
 or injection is in flight is ignored, so an impatient second tap cannot queue a
 recording behind the one being processed.
 
+## The status widget
+
+A floating pill, shown whenever the engine is not idle. It renders a twelve-band
+spectrum of what the microphone is hearing, the current state, and — in toggle
+mode — how to stop.
+
+The spectrum is real, not a level meter dressed up: `AudioSource::spectrum`
+takes a 1024-sample window of the tail of the capture buffer, applies a Hann
+window, and runs a real FFT (`realfft`, already in the tree via rubato), then
+groups the bins into log-spaced bands from 80 Hz to 8 kHz. Bars rise instantly
+and decay slowly, which is what makes a 60 Hz readout legible. The FFT runs
+outside the capture lock so the audio callback never waits on it.
+
+The pill is draggable, and where you leave it is remembered. That is in real
+tension with the widget's other rule — it must never take focus, or Speakeasy
+pastes into its own window — because dragging means accepting clicks, and the
+widget is only on screen *during* a dictation. `set_focusable(false)` is what
+keeps a drag from making Speakeasy the active app. The cost is that the pill can
+swallow a click meant for the window underneath, so it parks out of the way.
+
+A drag emits a window event per frame; positions are written to disk only once
+the widget has sat still for 600 ms.
+
+## Config lives on disk
+
+`~/Library/Application Support/com.speakeasy.app/config.json`, or
+`$XDG_CONFIG_HOME/com.speakeasy.app/config.json` when that is set.
+
+`Config::load` treats a missing file as a first run and returns the defaults; it
+treats malformed JSON as an error, because silently overwriting a file someone
+hand-edited is worse than starting from defaults and saying so. Saves go through
+a temporary file and a rename, so an interrupted write cannot truncate a good
+config. Every field is `#[serde(default)]`, so a file from an older build still
+loads and picks up new settings at their defaults.
+
+`Engine::persisting_to` is what turns saving on; without it the engine is
+memory-only, which is what the tests use. `SPEAKEASY_MODEL` still overrides
+`model_path` at startup, so the pipeline can be exercised without touching the
+file.
+
 ## Design decisions worth knowing
 
 - **Record-then-transcribe, not streaming.** Push-to-talk records to a buffer
@@ -146,8 +186,8 @@ intended approach in a `TODO`.
 - whisper.cpp loading and inference (`whisper/src/lib.rs`)
 - TCC permission checks (`platform/src/macos/mod.rs`)
 - model download and first-run flow
-- settings UI and the transcription widget window (the `widget` window is not
-  declared yet, so it is absent from `capabilities/default.json`)
+- settings UI: the pane is still a read-only log, so activation mode, hotkey and
+  injection mode can only be changed by editing `config.json`
 - signing, notarization, auto-update
 
 `icons/icon.png` and `icons/tray.png` are generated placeholders — flat colour
