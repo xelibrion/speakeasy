@@ -3,12 +3,14 @@
 //! These let the engine, and any shell, run headless — no microphone, no model
 //! weights, no Accessibility permission.
 
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crate::config::Hotkey;
 use crate::error::{Error, Result};
 use crate::ports::{
-    AudioSource, HotkeyCallback, HotkeyEvent, HotkeyListener, TextSink, Transcriber,
+    AudioSource, HotkeyCallback, HotkeyEvent, HotkeyListener, ModelFetcher, TextSink, Transcriber,
 };
 
 /// Returns a canned buffer from `stop`, and records whether it is capturing.
@@ -78,29 +80,47 @@ impl AudioSource for FakeAudio {
 /// Returns a fixed transcript, ignoring the audio.
 pub struct FakeTranscriber {
     result: Result<String>,
-    ready: bool,
+    ready: Mutex<bool>,
+    loaded: Mutex<Option<PathBuf>>,
+    load_fails_with: Mutex<Option<Error>>,
 }
 
 impl FakeTranscriber {
     pub fn returning(text: &str) -> Self {
         Self {
             result: Ok(text.to_string()),
-            ready: true,
+            ready: Mutex::new(true),
+            loaded: Mutex::new(None),
+            load_fails_with: Mutex::new(None),
         }
     }
 
     pub fn failing(error: Error) -> Self {
         Self {
             result: Err(error),
-            ready: true,
+            ..Self::returning("")
         }
     }
 
     pub fn not_ready() -> Self {
         Self {
-            result: Ok(String::new()),
-            ready: false,
+            ready: Mutex::new(false),
+            ..Self::returning("")
         }
+    }
+
+    /// Make the next `load` fail, so a test can assert that the previously
+    /// loaded model survives a bad swap.
+    pub fn fail_next_load(&self, error: Error) {
+        *self
+            .load_fails_with
+            .lock()
+            .expect("load failure mutex poisoned") = Some(error);
+    }
+
+    /// The path most recently loaded, if any.
+    pub fn loaded(&self) -> Option<PathBuf> {
+        self.loaded.lock().expect("loaded mutex poisoned").clone()
     }
 }
 
@@ -110,7 +130,133 @@ impl Transcriber for FakeTranscriber {
     }
 
     fn is_ready(&self) -> bool {
-        self.ready
+        *self.ready.lock().expect("ready mutex poisoned")
+    }
+
+    fn load(&self, path: &Path) -> Result<()> {
+        // Taken rather than cloned, so a test arms one failure rather than
+        // permanently breaking the fake.
+        if let Some(error) = self
+            .load_fails_with
+            .lock()
+            .expect("load failure mutex poisoned")
+            .take()
+        {
+            return Err(error);
+        }
+        *self.loaded.lock().expect("loaded mutex poisoned") = Some(path.to_path_buf());
+        *self.ready.lock().expect("ready mutex poisoned") = true;
+        Ok(())
+    }
+}
+
+/// So a test can hold an `Arc<FakeTranscriber>` to assert on while the engine
+/// owns the same instance behind a trait object.
+impl Transcriber for Arc<FakeTranscriber> {
+    fn transcribe(&self, samples: &[f32], language: Option<&str>) -> Result<String> {
+        self.as_ref().transcribe(samples, language)
+    }
+
+    fn is_ready(&self) -> bool {
+        self.as_ref().is_ready()
+    }
+
+    fn load(&self, path: &Path) -> Result<()> {
+        self.as_ref().load(path)
+    }
+}
+
+/// Writes canned bytes to the destination, one progress tick per chunk.
+pub struct FakeFetcher {
+    /// What to write. The manager hashes this, so a test controls whether
+    /// verification passes by controlling these bytes.
+    body: Vec<u8>,
+    chunks: usize,
+    fail_with: Option<Error>,
+    /// Set once `fetch` has observed the cancel flag, so a test can assert the
+    /// cancel actually reached the transport rather than racing past it.
+    observed_cancel: Mutex<bool>,
+    calls: Mutex<usize>,
+}
+
+impl FakeFetcher {
+    pub fn serving(body: impl Into<Vec<u8>>) -> Self {
+        Self {
+            body: body.into(),
+            chunks: 4,
+            fail_with: None,
+            observed_cancel: Mutex::new(false),
+            calls: Mutex::new(0),
+        }
+    }
+
+    pub fn failing(error: Error) -> Self {
+        Self {
+            fail_with: Some(error),
+            ..Self::serving(Vec::new())
+        }
+    }
+
+    /// How many progress ticks a fetch reports. The throttle test uses this to
+    /// generate far more ticks than should be emitted.
+    pub fn in_chunks(mut self, chunks: usize) -> Self {
+        self.chunks = chunks.max(1);
+        self
+    }
+
+    pub fn observed_cancel(&self) -> bool {
+        *self.observed_cancel.lock().expect("cancel mutex poisoned")
+    }
+
+    pub fn calls(&self) -> usize {
+        *self.calls.lock().expect("calls mutex poisoned")
+    }
+}
+
+impl ModelFetcher for FakeFetcher {
+    fn fetch(
+        &self,
+        _url: &str,
+        destination: &Path,
+        progress: &dyn Fn(u64, u64),
+        cancel: &AtomicBool,
+    ) -> Result<()> {
+        *self.calls.lock().expect("calls mutex poisoned") += 1;
+
+        if let Some(error) = &self.fail_with {
+            return Err(error.clone());
+        }
+
+        let total = self.body.len() as u64;
+        let chunk = (self.body.len() / self.chunks).max(1);
+        let mut written: Vec<u8> = Vec::new();
+
+        for piece in self.body.chunks(chunk) {
+            if cancel.load(Ordering::Relaxed) {
+                *self.observed_cancel.lock().expect("cancel mutex poisoned") = true;
+                // The port's contract: no file survives a cancel.
+                let _ = std::fs::remove_file(destination);
+                return Ok(());
+            }
+            written.extend_from_slice(piece);
+            progress(written.len() as u64, total);
+        }
+
+        std::fs::write(destination, &written)
+            .map_err(|err| Error::ModelDownload(format!("fake write failed: {err}")))?;
+        Ok(())
+    }
+}
+
+impl ModelFetcher for Arc<FakeFetcher> {
+    fn fetch(
+        &self,
+        url: &str,
+        destination: &Path,
+        progress: &dyn Fn(u64, u64),
+        cancel: &AtomicBool,
+    ) -> Result<()> {
+        self.as_ref().fetch(url, destination, progress, cancel)
     }
 }
 

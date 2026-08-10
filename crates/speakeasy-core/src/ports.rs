@@ -8,6 +8,9 @@
 //! All ports are `Send + Sync` because the engine drives transcription off the
 //! caller's thread.
 
+use std::path::Path;
+use std::sync::atomic::AtomicBool;
+
 use crate::config::Hotkey;
 use crate::error::Result;
 
@@ -47,6 +50,35 @@ pub trait Transcriber: Send + Sync {
 
     /// Whether weights are loaded and `transcribe` can be called.
     fn is_ready(&self) -> bool;
+
+    /// Load weights from `path`, replacing whatever is loaded.
+    ///
+    /// Expensive and blocking. Implementations must leave the previous model
+    /// intact when this fails — a bad swap should cost the user nothing, which
+    /// is what lets the download flow verify and load before committing.
+    fn load(&self, path: &Path) -> Result<()>;
+}
+
+/// Fetches a model file over the network.
+///
+/// A port rather than an HTTP call in the core for the same reason
+/// [`Transcriber`] is one: it keeps `speakeasy-core` free of a TLS stack, and
+/// it keeps every download branch — progress, a corrupt file, a cancel
+/// mid-transfer — testable offline against [`crate::fakes::FakeFetcher`].
+pub trait ModelFetcher: Send + Sync {
+    /// Stream `url` into `destination`, calling `progress(received, total)` as
+    /// bytes arrive. `total` is 0 if the server did not say.
+    ///
+    /// Blocking; call it off the UI thread. Must return promptly once `cancel`
+    /// is set, and must not leave `destination` behind when it does — the
+    /// caller reads a surviving file as a completed download.
+    fn fetch(
+        &self,
+        url: &str,
+        destination: &Path,
+        progress: &dyn Fn(u64, u64),
+        cancel: &AtomicBool,
+    ) -> Result<()>;
 }
 
 /// What the user did with the push-to-talk key.
