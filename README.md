@@ -1,7 +1,8 @@
 # Speakeasy
 
-Local push-to-talk dictation. Hold a key, speak, release — the transcript is
-injected into whatever app has focus. Transcription runs on-device.
+Local dictation. Tap a key and a floating widget appears while it listens; tap
+again and the transcript is injected into whatever app has focus. Transcription
+runs on-device. `Config::activation` switches the key back to hold-to-talk.
 
 macOS first, X11 Linux second. Wayland is explicitly out of scope.
 
@@ -76,7 +77,23 @@ settings still work.
 One caveat worth knowing: because it is a bare modifier, any use of Right
 Option — including `⌥`-chords for special characters — starts a recording.
 `min_recording_ms` discards taps shorter than 250 ms, which covers most
-accidents, but a deliberate long ⌥-chord will still record.
+accidents in hold mode; in toggle mode an ⌥-chord starts a recording that stays
+up until the next tap, which the widget at least makes obvious.
+
+### Toggle or push-to-talk
+
+`Config::activation` picks between the two. **Toggle is the default**: one tap
+starts capture and raises the widget, the next transcribes and injects. Holding
+a modifier through a long dictation is the worse ergonomic, and the widget is
+what keeps a forgotten recording from going unnoticed.
+
+The listener reports press and release regardless; only which edge the engine
+acts on changes, so toggle costs the platform layer nothing. `Engine::hotkey_action`
+maps `(mode, event, state)` to `Begin`, `Finish` or `Ignore`, and the shell just
+carries that out — the decision stays in the core, where it can be tested. In
+toggle mode the release edge is dropped and a press arriving while transcription
+or injection is in flight is ignored, so an impatient second tap cannot queue a
+recording behind the one being processed.
 
 ## Design decisions worth knowing
 

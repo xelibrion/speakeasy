@@ -21,8 +21,8 @@ pub mod ports;
 #[cfg(feature = "fakes")]
 pub mod fakes;
 
-pub use config::{Config, Hotkey, InjectionMode, ModifierKey};
-pub use engine::Engine;
+pub use config::{ActivationMode, Config, Hotkey, InjectionMode, ModifierKey};
+pub use engine::{Engine, HotkeyAction};
 pub use error::{Error, Result};
 pub use event::{Event, State};
 pub use ports::{AudioSource, HotkeyCallback, HotkeyEvent, HotkeyListener, TextSink, Transcriber};

@@ -3,8 +3,11 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Config {
-    /// What the user holds to talk.
+    /// The key that drives dictation.
     pub hotkey: Hotkey,
+
+    /// Whether that key is held or tapped. See [`ActivationMode`].
+    pub activation: ActivationMode,
 
     /// Path to the whisper model weights. `None` means first-run download.
     pub model_path: Option<String>,
@@ -17,6 +20,25 @@ pub struct Config {
 
     /// Drop recordings shorter than this — usually an accidental hotkey tap.
     pub min_recording_ms: u64,
+}
+
+/// How the hotkey starts and stops a recording.
+///
+/// The listener reports press and release either way; the difference is only
+/// which of those edges the engine acts on, so switching modes needs no change
+/// to the platform layer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ActivationMode {
+    /// Record while the key is held; release transcribes. Nothing keeps
+    /// recording if the user is interrupted mid-sentence, but a long dictation
+    /// means a long hold.
+    PushToTalk,
+
+    /// Tap to start, tap again to transcribe. The default: kinder to long
+    /// dictation and to anyone for whom holding a key is uncomfortable. The
+    /// widget is what keeps a forgotten recording visible.
+    Toggle,
 }
 
 /// The push-to-talk binding.
@@ -100,6 +122,7 @@ impl Default for Config {
             hotkey: Hotkey::Modifier {
                 key: ModifierKey::RightOption,
             },
+            activation: ActivationMode::Toggle,
             model_path: None,
             language: None,
             injection_mode: InjectionMode::Paste,

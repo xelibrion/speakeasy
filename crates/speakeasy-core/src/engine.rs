@@ -7,10 +7,22 @@ use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use crate::config::Config;
+use crate::config::{ActivationMode, Config};
 use crate::error::{Error, Result};
 use crate::event::{Event, State};
-use crate::ports::{AudioSource, TextSink, Transcriber};
+use crate::ports::{AudioSource, HotkeyEvent, TextSink, Transcriber};
+
+/// What a hotkey event means, given the activation mode and the current state.
+///
+/// Resolved separately from being carried out because [`Engine::finish_recording`]
+/// blocks and hotkey callbacks must not: the shell asks what to do on the
+/// listener's thread, then moves the slow half elsewhere.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HotkeyAction {
+    Begin,
+    Finish,
+    Ignore,
+}
 
 /// Owns application state and drives the ports. Cheap to clone — clones share
 /// one engine.
@@ -79,6 +91,31 @@ impl Engine {
 
     pub fn set_config(&self, config: Config) {
         *self.inner.config.lock().expect("config mutex poisoned") = config;
+    }
+
+    /// Interpret a hotkey edge. Cheap and non-blocking; the caller performs the
+    /// returned action.
+    ///
+    /// In [`ActivationMode::Toggle`] the release edge is dropped entirely and
+    /// the press edge alternates, which is why this needs the state rather than
+    /// just the event.
+    pub fn hotkey_action(&self, event: HotkeyEvent) -> HotkeyAction {
+        match self.config().activation {
+            ActivationMode::PushToTalk => match event {
+                HotkeyEvent::Pressed => HotkeyAction::Begin,
+                HotkeyEvent::Released => HotkeyAction::Finish,
+            },
+            ActivationMode::Toggle => match event {
+                HotkeyEvent::Released => HotkeyAction::Ignore,
+                HotkeyEvent::Pressed => match self.state() {
+                    State::Recording => HotkeyAction::Finish,
+                    // Mid-flight work owns the key; a stray tap must not queue
+                    // a second recording behind it.
+                    State::Transcribing | State::Injecting => HotkeyAction::Ignore,
+                    State::Idle | State::Failed { .. } => HotkeyAction::Begin,
+                },
+            },
+        }
     }
 
     /// Hotkey pressed. No-op unless idle, so key repeat cannot restart a
@@ -336,6 +373,88 @@ mod tests {
 
         assert_eq!(engine.state(), State::Idle);
         assert!(sink.injected().is_empty());
+    }
+
+    #[test]
+    fn push_to_talk_records_between_press_and_release() {
+        let (engine, _sink) = engine("hello");
+        engine.set_config(Config {
+            activation: ActivationMode::PushToTalk,
+            ..Config::default()
+        });
+
+        assert_eq!(
+            engine.hotkey_action(HotkeyEvent::Pressed),
+            HotkeyAction::Begin
+        );
+        engine.begin_recording().expect("recording should start");
+        assert_eq!(
+            engine.hotkey_action(HotkeyEvent::Released),
+            HotkeyAction::Finish
+        );
+    }
+
+    #[test]
+    fn toggle_alternates_on_press_and_ignores_release() {
+        let (engine, _sink) = engine("hello");
+        engine.set_config(Config {
+            activation: ActivationMode::Toggle,
+            min_recording_ms: 0,
+            ..Config::default()
+        });
+
+        assert_eq!(
+            engine.hotkey_action(HotkeyEvent::Pressed),
+            HotkeyAction::Begin
+        );
+        engine.begin_recording().expect("recording should start");
+
+        assert_eq!(
+            engine.hotkey_action(HotkeyEvent::Released),
+            HotkeyAction::Ignore,
+            "releasing the key must not stop a toggled recording"
+        );
+        assert_eq!(engine.state(), State::Recording);
+
+        assert_eq!(
+            engine.hotkey_action(HotkeyEvent::Pressed),
+            HotkeyAction::Finish
+        );
+        engine.finish_recording().expect("cycle should complete");
+        assert_eq!(
+            engine.hotkey_action(HotkeyEvent::Pressed),
+            HotkeyAction::Begin
+        );
+    }
+
+    #[test]
+    fn toggle_ignores_a_press_while_transcription_is_in_flight() {
+        let (engine, _sink) = engine("hello");
+        engine.set_config(Config {
+            activation: ActivationMode::Toggle,
+            ..Config::default()
+        });
+        engine.transition(State::Transcribing);
+
+        assert_eq!(
+            engine.hotkey_action(HotkeyEvent::Pressed),
+            HotkeyAction::Ignore
+        );
+    }
+
+    #[test]
+    fn toggle_recovers_from_a_failed_state_on_the_next_press() {
+        let (engine, _sink) = engine("hello");
+        engine.set_config(Config {
+            activation: ActivationMode::Toggle,
+            ..Config::default()
+        });
+        engine.fail(Error::SecureInputActive);
+
+        assert_eq!(
+            engine.hotkey_action(HotkeyEvent::Pressed),
+            HotkeyAction::Begin
+        );
     }
 
     #[test]
