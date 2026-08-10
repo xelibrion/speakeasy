@@ -5,8 +5,10 @@
 //! twenty lines against the same `Engine::subscribe`, which is why the core
 //! stays free of both.
 
-use speakeasy_core::Engine;
+use speakeasy_core::{Engine, Event};
 use tauri::{AppHandle, Emitter};
+
+use crate::tray;
 
 /// Event name the frontend listens on.
 pub const EVENT: &str = "speakeasy://event";
@@ -16,6 +18,11 @@ pub fn forward_events(app: AppHandle, engine: Engine) {
     std::thread::spawn(move || {
         // Ends when the engine drops its sender, i.e. on shutdown.
         for event in events {
+            // The tray status line is the only UI visible when no window is
+            // open, so it tracks state even while the webview is hidden.
+            if let Event::StateChanged { state } = &event {
+                tray::refresh(state);
+            }
             if let Err(err) = app.emit(EVENT, &event) {
                 tracing::warn!(%err, "failed to forward engine event to webview");
             }

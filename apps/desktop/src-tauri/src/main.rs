@@ -10,10 +10,12 @@
 mod bridge;
 mod commands;
 mod hotkey;
+mod tray;
 
 use speakeasy_core::{Config, Engine};
 use speakeasy_platform::CpalAudioSource;
 use speakeasy_whisper::WhisperTranscriber;
+
 fn main() {
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -36,6 +38,7 @@ fn main() {
         .setup(move |app| {
             // Core events → webview events. The only place the two worlds meet.
             bridge::forward_events(app.handle().clone(), engine.clone());
+            tray::attach(app.handle(), &engine)?;
             hotkey::register(app.handle().clone(), engine.clone(), &config.hotkey)?;
             Ok(())
         })
