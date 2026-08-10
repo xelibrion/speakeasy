@@ -30,7 +30,7 @@ pub use config::{
 };
 pub use engine::{Engine, HotkeyAction};
 pub use error::{Error, Result};
-pub use event::{Event, State};
+pub use event::{Event, ModelStatus, State};
 pub use models::{ModelId, ModelInfo};
 pub use ports::{AudioSource, HotkeyCallback, HotkeyEvent, HotkeyListener, TextSink, Transcriber};
 

@@ -25,6 +25,15 @@ pub enum Error {
     #[error("no speech model loaded")]
     ModelNotLoaded,
 
+    #[error("could not download the model: {0}")]
+    ModelDownload(String),
+
+    /// The bytes arrived but the digest did not match. Its own variant because
+    /// the remedy is specific — retry — where a transport failure may mean the
+    /// machine is offline and retrying is pointless.
+    #[error("the downloaded model was corrupted")]
+    ModelVerification,
+
     #[error("transcription failed: {0}")]
     Transcription(String),
 
