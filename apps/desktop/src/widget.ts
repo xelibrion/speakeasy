@@ -8,7 +8,7 @@
  * transitions but not a continuous level — polling at animation rate keeps the
  * event stream cheap.
  */
-import { getAudioLevel, getState, onEngineEvent, type State } from "./engine";
+import { errorLabel, getAudioLevel, getState, onEngineEvent, type State } from "./engine";
 
 const LABELS: Record<State["state"], string> = {
   idle: "Ready",
@@ -38,10 +38,13 @@ export function mountWidget(root: HTMLElement) {
 
   const render = (state: State) => {
     pill.dataset.state = state.state;
-    label.textContent =
-      state.state === "failed"
-        ? (state.error.message ?? LABELS.failed)
-        : LABELS[state.state];
+    if (state.state === "failed") {
+      label.textContent = errorLabel(state.error);
+      // The pill has room for one short line; the developer detail goes here.
+      console.warn("speakeasy:", state.error.kind, state.error.message ?? "");
+    } else {
+      label.textContent = LABELS[state.state];
+    }
 
     recording = state.state === "recording";
     if (!recording) fill.style.transform = "scaleX(0)";

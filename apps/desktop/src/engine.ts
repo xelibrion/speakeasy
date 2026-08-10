@@ -16,10 +16,51 @@ export type State =
   | { state: "injecting" }
   | { state: "failed"; error: EngineError };
 
+/**
+ * Serde tags for `core::error::Error`. Variants with a payload carry it in
+ * `message`; the rest arrive as a bare `kind`, which is why the UI cannot rely
+ * on `message` being present.
+ */
+export type ErrorKind =
+  | "AudioUnavailable"
+  | "MicrophonePermissionDenied"
+  | "InputPermissionDenied"
+  | "SecureInputActive"
+  | "ModelNotLoaded"
+  | "Transcription"
+  | "Injection"
+  | "Hotkey"
+  | "Other";
+
 export type EngineError = {
-  kind: string;
+  kind: ErrorKind;
   message?: string;
 };
+
+/**
+ * What to show the user for a failure.
+ *
+ * Keyed on kind rather than using `message`, because the payloads are developer
+ * strings ("could not load /path/…: …") and the widget is a one-line pill. The
+ * full message still reaches the console and the tracing log.
+ */
+const ERROR_LABELS: Record<ErrorKind, string> = {
+  AudioUnavailable: "No microphone available",
+  MicrophonePermissionDenied: "Microphone access denied",
+  InputPermissionDenied: "Accessibility access denied",
+  SecureInputActive: "A password field is blocking input",
+  ModelNotLoaded: "No speech model loaded",
+  Transcription: "Transcription failed",
+  Injection: "Could not insert the text",
+  Hotkey: "Hotkey is not bound",
+  Other: "Something went wrong",
+};
+
+export function errorLabel(error: EngineError): string {
+  // `Other` has nothing but its payload, so prefer that when it is there.
+  if (error.kind === "Other" && error.message) return error.message;
+  return ERROR_LABELS[error.kind] ?? ERROR_LABELS.Other;
+}
 
 export type EngineEvent =
   | { type: "stateChanged"; state: State }
@@ -46,8 +87,12 @@ export type Hotkey =
   | { kind: "modifier"; key: ModifierKey }
   | { kind: "accelerator"; accelerator: string };
 
+/** Hold the key, or tap it twice. See `core::config::ActivationMode`. */
+export type ActivationMode = "pushToTalk" | "toggle";
+
 export type Config = {
   hotkey: Hotkey;
+  activation: ActivationMode;
   modelPath: string | null;
   language: string | null;
   injectionMode: InjectionMode;
@@ -68,6 +113,12 @@ const MODIFIER_LABELS: Record<ModifierKey, string> = {
 
 export function hotkeyLabel(hotkey: Hotkey): string {
   return hotkey.kind === "modifier" ? MODIFIER_LABELS[hotkey.key] : hotkey.accelerator;
+}
+
+/** How to describe the binding to the user, mode included. */
+export function activationLabel(config: Config): string {
+  const key = hotkeyLabel(config.hotkey);
+  return config.activation === "toggle" ? `tap ${key} to start and stop` : `hold ${key} to talk`;
 }
 
 const EVENT = "speakeasy://event";

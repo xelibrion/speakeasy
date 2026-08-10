@@ -9,9 +9,10 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 
 import "./styles.css";
 import {
+  activationLabel,
+  errorLabel,
   getConfig,
   getState,
-  hotkeyLabel,
   onEngineEvent,
   openPermissionSettings,
   permissionsGranted,
@@ -48,7 +49,7 @@ async function mountSettings(app: HTMLElement) {
   ]);
 
   log(`state: ${state.state}`);
-  log(`hold to talk: ${hotkeyLabel(config.hotkey)}`);
+  log(`hotkey: ${activationLabel(config)}`);
   log(`model: ${config.modelPath ?? "(none loaded)"}`);
   log(`permissions granted: ${granted}`);
 
@@ -71,7 +72,7 @@ async function mountSettings(app: HTMLElement) {
         log(`injected ${event.chars} chars`);
         break;
       case "failed":
-        log(`error: ${event.error.kind} ${event.error.message ?? ""}`);
+        log(`error: ${errorLabel(event.error)} (${event.error.kind})`);
         break;
       case "audioLevel":
         break;
