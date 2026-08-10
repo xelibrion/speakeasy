@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/speakeasy-core",
+    "crates/speakeasy-models",
     "crates/speakeasy-platform",
     "crates/speakeasy-whisper",
     "apps/desktop/src-tauri",
@@ -15,6 +16,7 @@ license = "MIT"
 # Single place to pin versions. See README "Unverified versions" before first build.
 [workspace.dependencies]
 speakeasy-core = { path = "crates/speakeasy-core" }
+speakeasy-models = { path = "crates/speakeasy-models" }
 speakeasy-platform = { path = "crates/speakeasy-platform" }
 speakeasy-whisper = { path = "crates/speakeasy-whisper" }
 
@@ -33,6 +35,9 @@ rubato = "0.15"
 # it directly rather than by accident.
 realfft = "3"
 whisper-rs = "0.14"
+# Model downloads. Blocking by design — the ModelFetcher port's contract is
+# blocking, so an async runtime would be a dependency with nothing to do.
+ureq = "3"
 
 # macos-private-api is required for the transparent status widget.
 tauri = { version = "2", features = ["tray-icon", "macos-private-api"] }

@@ -1,0 +1,15 @@
+[package]
+name = "speakeasy-models"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# This crate exists so that speakeasy-core does not have to carry a TLS stack.
+# It implements one port and nothing else; see the design doc.
+[dependencies]
+speakeasy-core = { workspace = true }
+ureq = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+sha2.workspace = true
