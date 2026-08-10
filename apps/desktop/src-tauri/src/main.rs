@@ -85,6 +85,20 @@ fn main() {
     tauri::Builder::default()
         .manage(engine.clone())
         .setup(move |app| {
+            // Accessory, not Regular: no Dock icon, no app switcher entry, and
+            // — the part that matters — the app never activates.
+            //
+            // Everything about this tool assumes the user's focus stays where
+            // it was. An activating app takes the focus the transcript is aimed
+            // at, so the text lands in the wrong window, and the status panel
+            // starts eating keystrokes meant for the app underneath.
+            //
+            // `LSUIElement` in Info.plist says the same thing, but only once
+            // the app is bundled; `tauri dev` runs the bare binary, where it
+            // has no effect at all. Setting the policy here covers both.
+            #[cfg(target_os = "macos")]
+            app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+
             // Core events → webview events. The only place the two worlds meet.
             bridge::forward_events(app.handle().clone(), engine.clone());
             tray::attach(app.handle(), &engine)?;

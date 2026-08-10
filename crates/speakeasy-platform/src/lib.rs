@@ -45,3 +45,10 @@ pub fn permissions_granted() -> bool {
 pub fn open_permission_settings() {
     sys::open_permission_settings();
 }
+
+/// Note which app owns the focus, before showing any UI of our own. Injection
+/// aims at this app. No-op where showing a window cannot steal focus.
+pub fn remember_focus() {
+    #[cfg(target_os = "macos")]
+    sys::remember_focus();
+}

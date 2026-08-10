@@ -5,7 +5,7 @@
 //! twenty lines against the same `Engine::subscribe`, which is why the core
 //! stays free of both.
 
-use speakeasy_core::{Engine, Event};
+use speakeasy_core::{Engine, Event, State};
 use tauri::{AppHandle, Emitter};
 
 use crate::{tray, widget};
@@ -21,6 +21,19 @@ pub fn forward_events(app: AppHandle, engine: Engine) {
             // The tray status line is the only UI visible when no window is
             // open, so it tracks state even while the webview is hidden.
             if let Event::StateChanged { state } = &event {
+                // Hand focus back at the *start* of a dictation, not just at
+                // launch. The transcript is aimed at whatever had focus when
+                // the user spoke, so being the active app means pasting into
+                // ourselves — and anything the user does in between (the tray,
+                // the settings window) can make us active again. Doing it here
+                // leaves the whole of recording and transcription for the
+                // change to settle before the paste goes out.
+                if matches!(state, State::Recording) {
+                    // Before the widget is shown, because showing it is what
+                    // takes the focus away.
+                    speakeasy_platform::remember_focus();
+                }
+
                 // AppKit window and menu calls must happen on the main thread,
                 // and the engine emits from a worker. Hopping here is what lets
                 // `tray` and `widget` stay free of threading concerns — and

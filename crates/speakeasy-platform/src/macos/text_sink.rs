@@ -108,6 +108,20 @@ impl MacTextSink {
 
 impl TextSink for MacTextSink {
     fn inject(&self, text: &str) -> Result<usize> {
+        // Showing the widget can leave Speakeasy frontmost, and synthetic
+        // keystrokes follow the frontmost app — into a panel that refuses key
+        // status, which is to say nowhere. Put the focus back first.
+        if super::restore_focus() {
+            // Activation is asynchronous. Posting into the gap is exactly the
+            // failure this is here to prevent.
+            std::thread::sleep(std::time::Duration::from_millis(120));
+        }
+
+        // Where the text is actually about to go. Worth a line: injecting into
+        // the wrong app is silent, and indistinguishable from dropping it.
+        let (frontmost, frontmost_pid) = super::frontmost_app();
+        tracing::debug!(frontmost, frontmost_pid, "injecting");
+
         if Self::secure_input_active() {
             return Err(Error::SecureInputActive);
         }

@@ -85,16 +85,18 @@ pub fn sync(app: &AppHandle, state: &State, saved: Option<WidgetPosition>) {
     let visible = !matches!(state, State::Idle);
 
     let result = if visible {
-        position(&window, saved)
-            .and_then(|()| window.show())
-            .and_then(|()| {
-                // After `show`, not before: it ends with `orderFrontRegardless`,
-                // which is what actually puts the panel on screen, and ordering
-                // a window front before showing it achieves nothing.
-                #[cfg(target_os = "macos")]
-                make_overlay(&window)?;
-                Ok(())
-            })
+        position(&window, saved).and_then(|()| {
+            // On macOS `make_overlay` does the showing, via
+            // `orderFrontRegardless`. Tauri's `show` is deliberately not called
+            // here: it reaches AppKit as `makeKeyAndOrderFront:`, and a key
+            // widget takes the focus the transcript is aimed at — the text ends
+            // up nowhere and the next shortcut beeps against a panel that has
+            // no use for it.
+            #[cfg(target_os = "macos")]
+            return make_overlay(&window);
+            #[cfg(not(target_os = "macos"))]
+            window.show()
+        })
     } else {
         window.hide()
     };
@@ -133,7 +135,29 @@ fn make_overlay(window: &WebviewWindow) -> tauri::Result<()> {
         fn sel_registerName(name: *const u8) -> *mut c_void;
         fn objc_getClass(name: *const u8) -> *mut c_void;
         fn object_setClass(obj: *mut c_void, cls: *mut c_void) -> *mut c_void;
+        fn objc_allocateClassPair(
+            superclass: *mut c_void,
+            name: *const u8,
+            extra: usize,
+        ) -> *mut c_void;
+        fn objc_registerClassPair(cls: *mut c_void);
+        fn class_addMethod(
+            cls: *mut c_void,
+            name: *mut c_void,
+            imp: *const c_void,
+            types: *const u8,
+        ) -> i8;
         fn objc_msgSend();
+    }
+
+    /// `NO`, as the implementation of a `-> BOOL` method.
+    ///
+    /// This is the whole point of the subclass below. Refusing key status has
+    /// to be a property of the class, not a flag set after the fact: `show`
+    /// reaches AppKit as `makeKeyAndOrderFront:`, and the only thing that stops
+    /// that making the window key is `canBecomeKeyWindow` answering NO.
+    extern "C" fn refuse(_: *mut c_void, _: *mut c_void) -> i8 {
+        0
     }
 
     /// NSWindowStyleMaskNonactivatingPanel. Only meaningful on an NSPanel, and
@@ -166,8 +190,6 @@ fn make_overlay(window: &WebviewWindow) -> tauri::Result<()> {
             std::mem::transmute(objc_msgSend as *const ());
         let read_u64: unsafe extern "C" fn(*mut c_void, *mut c_void) -> u64 =
             std::mem::transmute(objc_msgSend as *const ());
-        let read_i64: unsafe extern "C" fn(*mut c_void, *mut c_void) -> i64 =
-            std::mem::transmute(objc_msgSend as *const ());
         // BOOL is a signed char on arm64, not a word.
         let read_bool: unsafe extern "C" fn(*mut c_void, *mut c_void) -> i8 =
             std::mem::transmute(objc_msgSend as *const ());
@@ -184,7 +206,39 @@ fn make_overlay(window: &WebviewWindow) -> tauri::Result<()> {
             if panel_class.is_null() {
                 tracing::warn!("NSPanel class not found; widget stays a plain window");
             } else {
-                object_setClass(ns_window, panel_class);
+                // Subclass NSPanel to refuse key and main status outright.
+                //
+                // Setting a flag is not enough. tao's own NSWindow subclass had
+                // exactly this, driven by `set_focusable`, and promoting the
+                // window threw it away — which is how the widget started
+                // stealing focus from the app being dictated into and eating
+                // its keystrokes. Overriding the two methods puts the refusal
+                // somewhere nothing can undo.
+                let subclass_name =
+                    CString::new("SpeakeasyWidgetPanel").expect("class name has no NUL");
+                let subclass =
+                    objc_allocateClassPair(panel_class, subclass_name.as_ptr() as *const u8, 0);
+
+                let class = if subclass.is_null() {
+                    // Already registered, which means a previous call got here.
+                    tracing::warn!("could not allocate the panel subclass; using NSPanel");
+                    panel_class
+                } else {
+                    // "c@:" — returns BOOL (a char), takes self and _cmd.
+                    let types = CString::new("c@:").expect("type encoding has no NUL");
+                    for method in ["canBecomeKeyWindow", "canBecomeMainWindow"] {
+                        class_addMethod(
+                            subclass,
+                            sel(method),
+                            refuse as *const c_void,
+                            types.as_ptr() as *const u8,
+                        );
+                    }
+                    objc_registerClassPair(subclass);
+                    subclass
+                };
+
+                object_setClass(ns_window, class);
 
                 let mask = read_u64(ns_window, sel("styleMask"));
                 send_u64(ns_window, sel("setStyleMask:"), mask | NONACTIVATING_PANEL);
@@ -212,21 +266,18 @@ fn make_overlay(window: &WebviewWindow) -> tauri::Result<()> {
         // construction. This is the version that says "front, even so".
         send(ns_window, sel("orderFrontRegardless"));
 
-        // Read back rather than trust the writes: whether AppKit kept them is
-        // the whole question when the widget fails to appear, and none of it is
-        // visible from the outside.
-        let behavior = read_u64(ns_window, sel("collectionBehavior"));
+        // Read back rather than trust the writes. Every one of these settings
+        // fails silently — the window stays alive and reports itself visible
+        // while being on the wrong Space, or quietly accepting keystrokes the
+        // user meant for something else. Two lines here cost nothing and are
+        // the only way any of it is observable from outside the process.
         tracing::debug!(
-            level = read_i64(ns_window, sel("level")),
-            expected_level = SCREEN_SAVER_LEVEL,
-            behavior = format!("{behavior:#x}"),
-            joins_all_spaces = behavior & CAN_JOIN_ALL_SPACES != 0,
-            fullscreen_auxiliary = behavior & FULL_SCREEN_AUXILIARY != 0,
-            // The telling one: a window that is "visible" but not on the active
-            // Space is a window the user cannot see.
+            // False means the widget is drawn on a Space the user is not
+            // looking at, which is indistinguishable from not showing at all.
             on_active_space = read_bool(ns_window, sel("isOnActiveSpace")) != 0,
-            ns_visible = read_bool(ns_window, sel("isVisible")) != 0,
-            nonactivating_panel = read_u64(ns_window, sel("styleMask")) & NONACTIVATING_PANEL != 0,
+            // Must stay false. A key panel takes the focus the transcript is
+            // aimed at, and swallows the shortcuts meant for the app beneath.
+            is_key = read_bool(ns_window, sel("isKeyWindow")) != 0,
             "widget overlay applied"
         );
     }
