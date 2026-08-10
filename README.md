@@ -11,6 +11,7 @@ macOS first, X11 Linux second. Wayland is explicitly out of scope.
 ```
 crates/
   speakeasy-core/       ports + state machine. No tauri, no OS APIs, no whisper.
+  speakeasy-models/     ModelFetcher over HTTP. Keeps TLS out of core.
   speakeasy-platform/   the only crate allowed to use cfg(target_os).
   speakeasy-whisper/    Transcriber backed by whisper.cpp.
 apps/
@@ -19,8 +20,10 @@ apps/
     src-tauri/          shell backend
 ```
 
-Dependencies point one way: `desktop` → `platform`/`whisper` → `core`. The core
-depends on nothing but `serde`, `thiserror` and `tracing`.
+Dependencies point one way: `desktop` → `models`/`platform`/`whisper` → `core`.
+The core depends on nothing but `serde`, `serde_json`, `thiserror`, `tracing`
+and `sha2` — the last only to verify a downloaded model, which is computation
+rather than a capability.
 
 ## The invariant
 
@@ -42,7 +45,7 @@ honest in practice:
 
 ## Ports
 
-The core needs four things from the outside world (`core/src/ports.rs`):
+The core needs five things from the outside world (`core/src/ports.rs`):
 
 | Port             | Real implementation                | Test double     |
 | ---------------- | ---------------------------------- | --------------- |
@@ -50,6 +53,13 @@ The core needs four things from the outside world (`core/src/ports.rs`):
 | `Transcriber`    | `whisper::WhisperTranscriber`      | `FakeTranscriber` |
 | `TextSink`       | `platform::{MacTextSink, X11TextSink}` | `FakeSink`  |
 | `HotkeyListener` | `platform::{MacHotkeys, X11Hotkeys}` | `FakeHotkeys` |
+| `ModelFetcher`   | `models::HttpFetcher`              | `FakeFetcher`   |
+
+`speakeasy-models` exists for the same reason `speakeasy-whisper` does: to keep
+a heavy dependency — a TLS stack, here — out of the crate that is supposed to be
+portable logic. It is one file implementing one trait. The payoff is that every
+download branch (progress, a corrupt file, a cancel mid-transfer) is unit-tested
+offline against `FakeFetcher`, with no network and no test server.
 
 ### Push-to-talk is a held modifier
 
@@ -131,9 +141,43 @@ config. Every field is `#[serde(default)]`, so a file from an older build still
 loads and picks up new settings at their defaults.
 
 `Engine::persisting_to` is what turns saving on; without it the engine is
-memory-only, which is what the tests use. `SPEAKEASY_MODEL` still overrides
-`model_path` at startup, so the pipeline can be exercised without touching the
-file.
+memory-only, which is what the tests use. `SPEAKEASY_MODEL` still overrides the
+model at startup — it now maps to `ModelChoice::Local` — so the pipeline can be
+exercised without touching the file.
+
+## Choosing a model
+
+`Config::model` is a `ModelChoice`: either a catalog id (`{"kind": "catalog",
+"id": "base.en"}`) or a path to a `.bin` you already have. Downloaded weights
+live in `models/` beside `config.json`, so they survive reinstalling the app.
+
+The distinction that makes the rest of it simple:
+
+- **`Config::model` is desired state** — what the user picked, persisted,
+  written the moment they choose it. It may name a model that is not on disk.
+- **`ModelStatus` is actual state** — what is loaded or downloading right now.
+  In memory only, rebuilt at launch.
+
+`Engine::ensure_model` reconciles them at startup, which is why first run is not
+a special case: a fresh config wants `base.en`, nothing is installed, so it
+downloads it. Identical machinery to a mid-session switch.
+
+Three behaviours follow from that split. Quitting mid-download resumes on the
+next launch, because config already names the wanted model. Cancelling reverts
+`Config::model` to whatever is loaded, so the abandoned transfer does not come
+back. And a download that fails does *not* revert — retrying is one click — but
+`ensure_model` will load any other installed model so the hotkey keeps working,
+with `ModelStatus::Failed` still saying why you are not on the model you chose.
+
+Downloads go to a `.part` file, are checked against the SHA-256 in the catalog,
+renamed into place, and only then loaded. Because the swap is last, the model
+you are dictating with keeps working for the whole download, and every failure
+short of that last step is a no-op. Sizes and digests in
+`core::models::catalog` come from the upstream LFS metadata; the ignored test in
+`speakeasy-models/tests/realfetch.rs` is what proves they still match.
+
+A config from before the catalog carries a bare `modelPath`. `Config::load`
+migrates it to a local choice and drops the old field on the next save.
 
 ## Design decisions worth knowing
 
@@ -185,9 +229,13 @@ intended approach in a `TODO`.
 - XInput2 raw-key hotkeys (`platform/src/linux/hotkey.rs`)
 - whisper.cpp loading and inference (`whisper/src/lib.rs`)
 - TCC permission checks (`platform/src/macos/mod.rs`)
-- model download and first-run flow
-- settings UI: the pane is still a read-only log, so activation mode, hotkey and
-  injection mode can only be changed by editing `config.json`
+- settings UI: only the Models tab is interactive. Activation mode, hotkey,
+  injection mode and language render read-only and can still only be changed by
+  editing `config.json`
+- resuming an interrupted download from where it stopped — a `.part` file is
+  discarded and the retry starts over
+- transcript history (designed in
+  `docs/superpowers/specs/2026-08-11-transcript-history-design.md`, not built)
 - signing, notarization, auto-update
 
 `icons/icon.png` and `icons/tray.png` are generated placeholders — flat colour
