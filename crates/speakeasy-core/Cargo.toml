@@ -13,6 +13,8 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
+# Model download verification. Pure computation, no OS or network dependency.
+sha2 = { workspace = true }
 
 [features]
 # Test doubles for the ports, so shells and integration tests can run headless.

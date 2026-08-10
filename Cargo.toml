@@ -20,6 +20,9 @@ speakeasy-whisper = { path = "crates/speakeasy-whisper" }
 
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# Verifying downloaded model files. Hashing is not a network stack, so this
+# does not compromise speakeasy-core's "portable, no OS APIs" invariant.
+sha2 = "0.10"
 thiserror = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
