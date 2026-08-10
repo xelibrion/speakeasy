@@ -3,6 +3,27 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
+use crate::models::ModelId;
+
+/// Where the weights come from.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum ModelChoice {
+    /// An entry in [`crate::models::CATALOG`], downloaded on demand.
+    Catalog { id: ModelId },
+
+    /// A `.bin` the user already has. Never downloaded, and never deleted by
+    /// us — it is not ours to remove.
+    Local { path: String },
+}
+
+impl Default for ModelChoice {
+    fn default() -> Self {
+        Self::Catalog {
+            id: ModelId::default(),
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -13,7 +34,21 @@ pub struct Config {
     /// Whether that key is held or tapped. See [`ActivationMode`].
     pub activation: ActivationMode,
 
-    /// Path to the whisper model weights. `None` means first-run download.
+    /// Which model the user wants.
+    ///
+    /// *Desired* state, not actual: on a fresh install this names the default
+    /// catalog model before anything has been downloaded. `Engine::ensure_model`
+    /// reconciles it against what is on disk, which is what makes first run and
+    /// a mid-session switch the same code path. What is actually loaded right
+    /// now is [`crate::event::ModelStatus`], which is never persisted.
+    pub model: ModelChoice,
+
+    /// Pre-catalog setting, read once and migrated to [`ModelChoice::Local`].
+    ///
+    /// Kept only so an existing config does not lose its model on upgrade.
+    /// [`Config::load`] clears it, so it disappears from the file on the next
+    /// save. Delete this field once no user could still be on such a build.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub model_path: Option<String>,
 
     /// BCP-47 language hint, or `None` to let the model auto-detect.
@@ -66,8 +101,30 @@ impl Config {
             }
         };
 
-        serde_json::from_str(&text)
-            .map_err(|err| Error::Other(format!("{} is not valid config: {err}", path.display())))
+        let mut config: Self = serde_json::from_str(&text).map_err(|err| {
+            Error::Other(format!("{} is not valid config: {err}", path.display()))
+        })?;
+        config.migrate();
+        Ok(config)
+    }
+
+    /// Fold deprecated fields into their replacements.
+    ///
+    /// Only applied on load, so the migration runs once and the next save
+    /// writes the current shape.
+    ///
+    /// The `model == default` guard is the subtle part. Serde fills `model`
+    /// with the default when the key is absent, so "absent" and "explicitly the
+    /// default" are indistinguishable here. Migrating only in that case is the
+    /// right trade: a user who has a stale `model_path` and has never chosen a
+    /// catalog model gets the local file they were already using, and anyone
+    /// with a deliberate selection keeps it.
+    fn migrate(&mut self) {
+        if let Some(path) = self.model_path.take() {
+            if self.model == ModelChoice::default() {
+                self.model = ModelChoice::Local { path };
+            }
+        }
     }
 
     /// Write config to `path`, creating the directory if needed.
@@ -194,6 +251,7 @@ impl Default for Config {
                 key: ModifierKey::RightOption,
             },
             activation: ActivationMode::Toggle,
+            model: ModelChoice::default(),
             model_path: None,
             language: None,
             injection_mode: InjectionMode::Paste,
@@ -259,5 +317,112 @@ mod tests {
         let config = Config::load(&path).expect("a partial config should load");
         assert_eq!(config.min_recording_ms, 400);
         assert_eq!(config.activation, Config::default().activation);
+    }
+
+    #[test]
+    fn the_default_config_wants_the_default_catalog_model() {
+        assert_eq!(
+            Config::default().model,
+            ModelChoice::Catalog {
+                id: ModelId::default()
+            }
+        );
+    }
+
+    /// Configs written before the catalog existed carry a bare path. Losing the
+    /// user's model on upgrade would mean silently re-downloading something
+    /// they already have.
+    #[test]
+    fn a_legacy_model_path_migrates_to_a_local_choice() {
+        let dir = TempDir::new("legacy-model");
+        let path = dir.join("config.json");
+        std::fs::write(&path, r#"{"modelPath": "/models/ggml-base.en.bin"}"#)
+            .expect("write should succeed");
+
+        let config = Config::load(&path).expect("a legacy config should load");
+
+        assert_eq!(
+            config.model,
+            ModelChoice::Local {
+                path: "/models/ggml-base.en.bin".to_string()
+            }
+        );
+        assert_eq!(config.model_path, None, "the legacy field is consumed");
+    }
+
+    /// A newer build may write a model id this build has never heard of. That
+    /// must cost the user the model, not every other setting in the file.
+    #[test]
+    fn an_unknown_model_id_still_loads_the_rest_of_the_config() {
+        let dir = TempDir::new("unknown-model");
+        let path = dir.join("config.json");
+        std::fs::write(
+            &path,
+            r#"{"model": {"kind": "catalog", "id": "enormous-v9"}, "minRecordingMs": 400}"#,
+        )
+        .expect("write should succeed");
+
+        let config = Config::load(&path).expect("an unknown id is not a parse error");
+
+        assert_eq!(config.min_recording_ms, 400);
+        assert_eq!(
+            config.model,
+            ModelChoice::Catalog {
+                id: ModelId::new("enormous-v9")
+            }
+        );
+    }
+
+    /// Otherwise a stale `modelPath` left by a downgrade-then-upgrade would
+    /// override a selection the user made deliberately.
+    #[test]
+    fn an_explicit_model_beats_a_leftover_model_path() {
+        let dir = TempDir::new("both-model-fields");
+        let path = dir.join("config.json");
+        std::fs::write(
+            &path,
+            r#"{"model": {"kind": "catalog", "id": "small.en"}, "modelPath": "/old.bin"}"#,
+        )
+        .expect("write should succeed");
+
+        let config = Config::load(&path).expect("load should succeed");
+
+        assert_eq!(
+            config.model,
+            ModelChoice::Catalog {
+                id: ModelId::new("small.en")
+            }
+        );
+    }
+
+    #[test]
+    fn a_model_choice_survives_a_save_and_load() {
+        let dir = TempDir::new("model-roundtrip");
+        let path = dir.join("config.json");
+
+        let config = Config {
+            model: ModelChoice::Local {
+                path: "/tmp/custom.bin".to_string(),
+            },
+            ..Config::default()
+        };
+        config.save(&path).expect("save should succeed");
+
+        assert_eq!(Config::load(&path).expect("load should succeed"), config);
+    }
+
+    /// The deprecated field should not reappear in files written by this build.
+    #[test]
+    fn a_saved_config_does_not_write_the_legacy_field() {
+        let dir = TempDir::new("no-legacy-field");
+        let path = dir.join("config.json");
+
+        Config::default().save(&path).expect("save should succeed");
+
+        let text = std::fs::read_to_string(&path).expect("read should succeed");
+        assert!(
+            !text.contains("modelPath"),
+            "unexpected legacy field: {text}"
+        );
     }
 }

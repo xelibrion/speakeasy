@@ -25,7 +25,9 @@ pub mod fakes;
 #[cfg(test)]
 mod testing;
 
-pub use config::{ActivationMode, Config, Hotkey, InjectionMode, ModifierKey, WidgetPosition};
+pub use config::{
+    ActivationMode, Config, Hotkey, InjectionMode, ModelChoice, ModifierKey, WidgetPosition,
+};
 pub use engine::{Engine, HotkeyAction};
 pub use error::{Error, Result};
 pub use event::{Event, State};
