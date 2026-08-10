@@ -11,6 +11,9 @@ speakeasy-core = { workspace = true }
 whisper-rs = { workspace = true }
 tracing = { workspace = true }
 
+[dev-dependencies]
+hound = "3"
+
 [features]
 default = []
 # Metal + CoreML acceleration on Apple silicon.

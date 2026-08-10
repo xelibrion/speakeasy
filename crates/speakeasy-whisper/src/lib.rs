@@ -3,53 +3,108 @@
 use std::path::Path;
 use std::sync::Mutex;
 
-use speakeasy_core::{Error, Result, Transcriber};
+use speakeasy_core::{Error, Result, Transcriber, TARGET_SAMPLE_RATE};
+use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
 
 pub struct WhisperTranscriber {
     // whisper.cpp state is not safe to use concurrently; one utterance at a
     // time is exactly what push-to-talk needs anyway.
-    state: Mutex<Option<()>>,
+    context: Mutex<Option<WhisperContext>>,
 }
 
 impl WhisperTranscriber {
     /// Load weights from disk. Expensive — do it once, off the UI thread.
     pub fn load(model_path: &Path) -> Result<Self> {
-        // TODO: WhisperContext::new_with_params, then create_state().
-        let _ = model_path;
-        Err(Error::Transcription(
-            "whisper model loading not implemented yet".to_string(),
-        ))
+        // whisper.cpp and ggml print progress straight to stdout otherwise,
+        // which is no use in a menu-bar app. This routes them through `log`,
+        // which tracing-subscriber picks up.
+        static HOOKS: std::sync::Once = std::sync::Once::new();
+        HOOKS.call_once(whisper_rs::install_logging_hooks);
+
+        if !model_path.exists() {
+            return Err(Error::Transcription(format!(
+                "no model at {}",
+                model_path.display()
+            )));
+        }
+
+        let path = model_path.to_str().ok_or_else(|| {
+            Error::Transcription(format!("model path is not UTF-8: {}", model_path.display()))
+        })?;
+
+        let context = WhisperContext::new_with_params(path, WhisperContextParameters::default())
+            .map_err(|err| Error::Transcription(format!("could not load {path}: {err}")))?;
+
+        tracing::info!(model = path, "whisper model loaded");
+        Ok(Self {
+            context: Mutex::new(Some(context)),
+        })
     }
 
     /// An unloaded transcriber, so the app can start without weights and
     /// report [`Error::ModelNotLoaded`] until the user picks a model.
     pub fn unloaded() -> Self {
         Self {
-            state: Mutex::new(None),
+            context: Mutex::new(None),
         }
     }
 }
 
 impl Transcriber for WhisperTranscriber {
     fn transcribe(&self, samples: &[f32], language: Option<&str>) -> Result<String> {
-        let state = self.state.lock().expect("whisper state mutex poisoned");
-        if state.is_none() {
-            return Err(Error::ModelNotLoaded);
+        let guard = self.context.lock().expect("whisper context mutex poisoned");
+        let context = guard.as_ref().ok_or(Error::ModelNotLoaded)?;
+
+        // A state owns the KV cache. Creating one per utterance keeps this
+        // struct non-self-referential, and the cost is trivial next to
+        // inference itself.
+        let mut state = context.create_state().map_err(|err| {
+            Error::Transcription(format!("could not create decoder state: {err}"))
+        })?;
+
+        let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
+        params.set_language(language);
+        params.set_translate(false);
+        // whisper.cpp writes to stdout unless every one of these is off.
+        params.set_print_special(false);
+        params.set_print_progress(false);
+        params.set_print_realtime(false);
+        params.set_print_timestamps(false);
+
+        let seconds = samples.len() as f32 / TARGET_SAMPLE_RATE as f32;
+        let started = std::time::Instant::now();
+
+        state
+            .full(params, samples)
+            .map_err(|err| Error::Transcription(format!("inference failed: {err}")))?;
+
+        let segments = state
+            .full_n_segments()
+            .map_err(|err| Error::Transcription(format!("could not count segments: {err}")))?;
+
+        let mut text = String::new();
+        for i in 0..segments {
+            // `_lossy` so a stray byte in one segment cannot fail the whole
+            // utterance — dropping a character beats dropping the dictation.
+            let segment = state.full_get_segment_text_lossy(i).map_err(|err| {
+                Error::Transcription(format!("could not read segment {i}: {err}"))
+            })?;
+            text.push_str(&segment);
         }
 
-        // TODO: FullParams with SamplingStrategy::Greedy, set_language(language),
-        // set_translate(false), set_print_* all false; run full() and
-        // concatenate the segments.
-        let _ = (samples, language);
-        Err(Error::Transcription(
-            "whisper inference not implemented yet".to_string(),
-        ))
+        tracing::debug!(
+            audio_s = seconds,
+            elapsed_s = started.elapsed().as_secs_f32(),
+            segments,
+            "transcribed"
+        );
+        Ok(text)
     }
 
     fn is_ready(&self) -> bool {
-        self.state
+        self.context
             .lock()
-            .expect("whisper state mutex poisoned")
+            .expect("whisper context mutex poisoned")
             .is_some()
     }
 }
