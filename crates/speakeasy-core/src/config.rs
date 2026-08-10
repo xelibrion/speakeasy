@@ -206,36 +206,19 @@ impl Default for Config {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// A directory of our own under the system temp dir, removed on drop.
-    struct TempDir(std::path::PathBuf);
-
-    impl TempDir {
-        fn new(name: &str) -> Self {
-            let path =
-                std::env::temp_dir().join(format!("speakeasy-{name}-{}", std::process::id()));
-            std::fs::create_dir_all(&path).expect("temp dir should be creatable");
-            Self(path)
-        }
-    }
-
-    impl Drop for TempDir {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.0);
-        }
-    }
+    use crate::testing::TempDir;
 
     #[test]
     fn a_missing_file_loads_the_defaults() {
         let dir = TempDir::new("missing");
-        let config = Config::load(&dir.0.join("config.json")).expect("first run is not an error");
+        let config = Config::load(&dir.join("config.json")).expect("first run is not an error");
         assert_eq!(config, Config::default());
     }
 
     #[test]
     fn config_survives_a_save_and_load() {
         let dir = TempDir::new("roundtrip");
-        let path = dir.0.join("config.json");
+        let path = dir.join("config.json");
 
         let config = Config {
             activation: ActivationMode::PushToTalk,
@@ -250,7 +233,7 @@ mod tests {
     #[test]
     fn saving_creates_the_directory() {
         let dir = TempDir::new("nested");
-        let path = dir.0.join("deeper").join("config.json");
+        let path = dir.join("deeper").join("config.json");
 
         Config::default().save(&path).expect("save should succeed");
         assert!(path.exists());
@@ -259,7 +242,7 @@ mod tests {
     #[test]
     fn malformed_config_is_an_error_rather_than_a_silent_reset() {
         let dir = TempDir::new("malformed");
-        let path = dir.0.join("config.json");
+        let path = dir.join("config.json");
         std::fs::write(&path, "{ not json").expect("write should succeed");
 
         assert!(Config::load(&path).is_err());
@@ -270,7 +253,7 @@ mod tests {
     #[test]
     fn a_config_missing_new_fields_still_loads() {
         let dir = TempDir::new("partial");
-        let path = dir.0.join("config.json");
+        let path = dir.join("config.json");
         std::fs::write(&path, r#"{"minRecordingMs": 400}"#).expect("write should succeed");
 
         let config = Config::load(&path).expect("a partial config should load");

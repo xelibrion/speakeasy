@@ -21,6 +21,9 @@ pub mod ports;
 #[cfg(feature = "fakes")]
 pub mod fakes;
 
+#[cfg(test)]
+mod testing;
+
 pub use config::{ActivationMode, Config, Hotkey, InjectionMode, ModifierKey, WidgetPosition};
 pub use engine::{Engine, HotkeyAction};
 pub use error::{Error, Result};
