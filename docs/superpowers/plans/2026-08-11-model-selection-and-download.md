@@ -43,7 +43,7 @@ Conventions to match, visible throughout the existing code:
 | `crates/speakeasy-models/Cargo.toml` | New crate manifest |
 | `crates/speakeasy-models/src/lib.rs` | `HttpFetcher` — the real `ModelFetcher` |
 | `crates/speakeasy-models/tests/fetch.rs` | Localhost `TcpListener` test |
-| `apps/desktop/src/settings.ts` | Settings window rendering, incl. the Models pane |
+| `apps/desktop/src/settings.ts` | Settings window: the tab shell, the permissions banner, and the Models and Dictation tabs |
 
 **Modified files**
 
@@ -2147,16 +2147,34 @@ Add `tauri-plugin-dialog = "2"` to `apps/desktop/src-tauri/Cargo.toml`, register
 
 Structure, not full code — follow the existing style in `widget.ts`:
 
-`mountSettings(app)` renders a `<h1>` and four sections, in this order:
+`mountSettings(app)` builds a **tabbed window**, because more tabs are coming — a History tab has its own spec, and the currently read-only settings will grow editors. Getting the shell right once is cheaper than retrofitting navigation around a pane that assumed it was alone.
 
-1. **Models** — interactive, described below.
-2. **Permissions** — `permissionsGranted()` plus the "Open permission settings" button, shown only when the grant is missing. **Carried over from the current `main.ts`, not rewritten.** This is the only in-app route to fixing a missing Accessibility grant, which is the likeliest reason a fresh install does nothing, so it must survive the deletion of the debug log.
-3. **Dictation** — read-only rows: `activationLabel(config)`, injection mode.
-4. **Language** — read-only: the `language` setting, or "Auto-detect" when null.
+```ts
+type Tab = {
+  id: string;
+  label: string;
+  mount: (panel: HTMLElement) => void | Promise<void>;
+};
 
-Sections 3 and 4 have no editors. Those settings are not editable yet and the window should be honest about what it does; the sections exist as slots for later work.
+const TABS: Tab[] = [
+  { id: "models", label: "Models", mount: mountModels },
+  { id: "dictation", label: "Dictation", mount: mountDictation },
+];
+```
 
-The Models section:
+Data-driven on purpose: adding the History tab later is one entry in this array plus one `mount` function, with no change to the shell.
+
+Shell behaviour:
+
+- A `<nav role="tablist">` of buttons, one per entry, and a single `<section role="tabpanel">` below it. Use the ARIA roles and `aria-selected` — it costs three attributes and it is what makes the tabs keyboard-navigable.
+- The first tab is selected on open. Do **not** persist the selected tab to config: `Config` is behavioural state that syncs to disk on every change, and which tab someone last clicked is neither.
+- Switching tabs calls the new tab's `mount` on a cleared panel. Each `mount` owns its own event subscription and returns nothing; the shell tears down the previous panel's listeners before mounting the next, so a background tab is not re-rendering on every progress tick.
+
+**Permissions is a banner, not a tab.** `permissionsGranted()` plus the "Open permission settings" button render *above* the tab bar, and only when the grant is missing. **Carried over from the current `main.ts`, not rewritten.** It is the only in-app route to fixing a missing Accessibility grant — the likeliest reason a fresh install does nothing — so it must survive the deletion of the debug log, and burying it in a tab nobody opens would waste it. A banner is right for something that is usually absent and urgent when present.
+
+**The Dictation tab** is read-only rows: `activationLabel(config)`, injection mode, and language (or "Auto-detect" when null). No editors — those settings are not editable yet and the window should be honest about what it does. The tab exists as the slot they will fill.
+
+**The Models tab:**
 - The Models section renders one row per `getModelCatalog()` entry: label, `note`, `formatBytes(info.bytes)`, and one control chosen from — **In use** (disabled) when `config.model` is `{kind:"catalog", id}` matching; **Use** when installed but not selected; **Remove** beside it; **Download** when not installed; a `<progress>` plus **Cancel** when `modelStatus` is `downloading` with this id.
 - Below the rows, a **Use a local file…** button calling `open({ filters: [{ name: "Model", extensions: ["bin"] }] })` from `@tauri-apps/plugin-dialog`, then `selectModel({ kind: "local", path })`.
 - Subscribe with `onEngineEvent`; on `modelStatusChanged`, update only the affected row's control rather than re-rendering the list — a re-render on every progress tick would fight the user's scroll position.
@@ -2194,7 +2212,8 @@ Check each of these:
 - **Remove** a model that is not in use: the row returns to **Download**.
 - Pick a local `.bin`: the row set stays as-is and the read-only summary shows the local path.
 - Quit mid-download and relaunch: the download restarts on its own.
-- Revoke Accessibility in System Settings and reopen the window: the Permissions section appears with a working button.
+- Revoke Accessibility in System Settings and reopen the window: the permissions banner appears above the tabs with a working button.
+- Switch to the Dictation tab while a download runs: the tray keeps updating, and switching back to Models shows current progress rather than a stale bar.
 
 - [ ] **Step 7: Commit**
 
