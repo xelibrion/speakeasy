@@ -16,6 +16,7 @@ pub mod config;
 pub mod engine;
 pub mod error;
 pub mod event;
+pub mod models;
 pub mod ports;
 
 #[cfg(feature = "fakes")]
@@ -28,6 +29,7 @@ pub use config::{ActivationMode, Config, Hotkey, InjectionMode, ModifierKey, Wid
 pub use engine::{Engine, HotkeyAction};
 pub use error::{Error, Result};
 pub use event::{Event, State};
+pub use models::{ModelId, ModelInfo};
 pub use ports::{AudioSource, HotkeyCallback, HotkeyEvent, HotkeyListener, TextSink, Transcriber};
 
 /// Sample rate every [`Transcriber`] implementation expects.
