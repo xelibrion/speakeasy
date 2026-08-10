@@ -8,6 +8,7 @@
 //! All ports are `Send + Sync` because the engine drives transcription off the
 //! caller's thread.
 
+use crate::config::Hotkey;
 use crate::error::Result;
 
 /// Captures microphone audio, already resampled to [`crate::TARGET_SAMPLE_RATE`]
@@ -51,9 +52,12 @@ pub type HotkeyCallback = Box<dyn Fn(HotkeyEvent) + Send + Sync>;
 
 /// A global push-to-talk binding.
 pub trait HotkeyListener: Send + Sync {
-    /// Register `accelerator` and invoke `on_event` for press and release.
+    /// Register `hotkey` and invoke `on_event` for press and release.
     /// Replaces any previously registered binding.
-    fn register(&self, accelerator: &str, on_event: HotkeyCallback) -> Result<()>;
+    ///
+    /// Implementations need not support every [`Hotkey`] shape; an unsupported
+    /// one must fail with [`crate::Error::Hotkey`] rather than bind nothing.
+    fn register(&self, hotkey: &Hotkey, on_event: HotkeyCallback) -> Result<()>;
 
     fn unregister(&self) -> Result<()>;
 }

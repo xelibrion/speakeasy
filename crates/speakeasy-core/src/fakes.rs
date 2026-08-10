@@ -5,6 +5,7 @@
 
 use std::sync::{Arc, Mutex};
 
+use crate::config::Hotkey;
 use crate::error::{Error, Result};
 use crate::ports::{
     AudioSource, HotkeyCallback, HotkeyEvent, HotkeyListener, TextSink, Transcriber,
@@ -150,7 +151,7 @@ impl TextSink for Arc<FakeSink> {
 #[derive(Default)]
 pub struct FakeHotkeys {
     callback: Mutex<Option<HotkeyCallback>>,
-    accelerator: Mutex<Option<String>>,
+    bound: Mutex<Option<Hotkey>>,
 }
 
 impl FakeHotkeys {
@@ -166,32 +167,29 @@ impl FakeHotkeys {
         }
     }
 
-    pub fn accelerator(&self) -> Option<String> {
-        self.accelerator
-            .lock()
-            .expect("accelerator mutex poisoned")
-            .clone()
+    /// What is currently bound, if anything.
+    pub fn bound(&self) -> Option<Hotkey> {
+        self.bound.lock().expect("bound mutex poisoned").clone()
     }
 }
 
 impl HotkeyListener for FakeHotkeys {
-    fn register(&self, accelerator: &str, on_event: HotkeyCallback) -> Result<()> {
-        *self.accelerator.lock().expect("accelerator mutex poisoned") =
-            Some(accelerator.to_string());
+    fn register(&self, hotkey: &Hotkey, on_event: HotkeyCallback) -> Result<()> {
+        *self.bound.lock().expect("bound mutex poisoned") = Some(hotkey.clone());
         *self.callback.lock().expect("callback mutex poisoned") = Some(on_event);
         Ok(())
     }
 
     fn unregister(&self) -> Result<()> {
-        *self.accelerator.lock().expect("accelerator mutex poisoned") = None;
+        *self.bound.lock().expect("bound mutex poisoned") = None;
         *self.callback.lock().expect("callback mutex poisoned") = None;
         Ok(())
     }
 }
 
 impl HotkeyListener for Arc<FakeHotkeys> {
-    fn register(&self, accelerator: &str, on_event: HotkeyCallback) -> Result<()> {
-        self.as_ref().register(accelerator, on_event)
+    fn register(&self, hotkey: &Hotkey, on_event: HotkeyCallback) -> Result<()> {
+        self.as_ref().register(hotkey, on_event)
     }
 
     fn unregister(&self) -> Result<()> {

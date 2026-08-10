@@ -48,13 +48,35 @@ The core needs four things from the outside world (`core/src/ports.rs`):
 | `AudioSource`    | `platform::CpalAudioSource`        | `FakeAudio`     |
 | `Transcriber`    | `whisper::WhisperTranscriber`      | `FakeTranscriber` |
 | `TextSink`       | `platform::{MacTextSink, X11TextSink}` | `FakeSink`  |
-| `HotkeyListener` | shell-provided (Tauri plugin today)| `FakeHotkeys`   |
+| `HotkeyListener` | `platform::{MacHotkeys, X11Hotkeys}` | `FakeHotkeys` |
 
-`HotkeyListener` has no platform implementation yet: the Tauri shell registers
-the shortcut through its own plugin and drives the engine directly
-(`src-tauri/src/hotkey.rs`). The port exists so a SwiftUI shell — or a headless
-test — can supply press/release from elsewhere. If the shell-owned approach
-becomes awkward, move it into `platform` behind the existing trait.
+### Push-to-talk is a held modifier
+
+The default binding is **Right Option**, held. That shape rules out every
+ordinary global-shortcut library, for two reasons: an accelerator needs a
+non-modifier key, and the usual APIs report "Option is down" without saying
+which Option.
+
+So `MacHotkeys` taps `FlagsChanged` through CoreGraphics and reads IOKit's
+*device-dependent* modifier bits, which do encode the side. The tap is
+`ListenOnly`, so Right Option still types whatever it normally types — nothing
+is swallowed. This is why the listener lives in `platform` rather than the
+shell, and why `tauri-plugin-global-shortcut` is no longer a dependency.
+
+`Config::hotkey` is a `Hotkey` enum, not a string: `Modifier { key }` for the
+held-modifier shape and `Accelerator { accelerator }` for a conventional chord.
+macOS implements the first and rejects the second with a clear error.
+
+**This needs Accessibility permission.** Without it `CGEventTap::new` fails and
+registration reports `Error::InputPermissionDenied` rather than binding nothing
+and going quiet. Startup logs `push-to-talk bound hotkey="Right Option"` on
+success; a failure is a warning and the app keeps running, since the tray and
+settings still work.
+
+One caveat worth knowing: because it is a bare modifier, any use of Right
+Option — including `⌥`-chords for special characters — starts a recording.
+`min_recording_ms` discards taps shorter than 250 ms, which covers most
+accidents, but a deliberate long ⌥-chord will still record.
 
 ## Design decisions worth knowing
 
@@ -90,21 +112,20 @@ passes, and the frontend typechecks and bundles. Resolved versions are in
 `Cargo.lock` — tauri 2.11.5, whisper-rs 0.14.4, cpal 0.15.3, rubato 0.15.0,
 x11rb 0.13.2.
 
-One assumption is load-bearing and only partly verified: push-to-talk needs
-key-*release* events. `ShortcutState` (re-exported from `global-hotkey` 0.8)
-does have both `Pressed` and `Released`, but that the macOS backend actually
-delivers `Released` in practice is still unconfirmed — check it before building
-much on top. If it does not, move hotkeys into `speakeasy-platform` behind the
-existing `HotkeyListener` port and drop the shell adapter.
+Push-to-talk is verified end to end on macOS: a synthesised Right Option press
+reaches the tap, drives the engine through `begin_recording`, and fails with
+`ModelNotLoaded` — the correct outcome until weights are loaded.
 
 ## Not yet implemented
 
-Every port implementation is a typed stub returning an error, with the intended
-approach in a `TODO`. The core state machine is complete and tested.
+The core state machine and the macOS hotkey listener are complete. The
+remaining port implementations are typed stubs returning an error, with the
+intended approach in a `TODO`.
 
 - cpal capture + rubato resampling (`platform/src/audio.rs`)
 - CGEvent / pasteboard injection (`platform/src/macos/text_sink.rs`)
 - XTEST injection (`platform/src/linux/text_sink.rs`)
+- XInput2 raw-key hotkeys (`platform/src/linux/hotkey.rs`)
 - whisper.cpp loading and inference (`whisper/src/lib.rs`)
 - TCC permission checks (`platform/src/macos/mod.rs`)
 - model download and first-run flow

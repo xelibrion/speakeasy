@@ -1,12 +1,18 @@
+mod hotkey;
 mod text_sink;
 
 use speakeasy_core::config::InjectionMode;
-use speakeasy_core::TextSink;
+use speakeasy_core::{HotkeyListener, TextSink};
 
+pub use hotkey::MacHotkeys;
 pub use text_sink::MacTextSink;
 
 pub fn text_sink(mode: InjectionMode) -> Box<dyn TextSink> {
     Box::new(MacTextSink::new(mode))
+}
+
+pub fn hotkey_listener() -> Box<dyn HotkeyListener> {
+    Box::new(MacHotkeys::new())
 }
 
 /// Microphone (AVCaptureDevice) plus Accessibility (AXIsProcessTrusted).

@@ -8,6 +8,7 @@
 import {
   getConfig,
   getState,
+  hotkeyLabel,
   onEngineEvent,
   openPermissionSettings,
   permissionsGranted,
@@ -34,7 +35,7 @@ async function main() {
   ]);
 
   log(`state: ${state.state}`);
-  log(`hotkey: ${config.hotkey}`);
+  log(`hold to talk: ${hotkeyLabel(config.hotkey)}`);
   log(`model: ${config.modelPath ?? "(none loaded)"}`);
   log(`permissions granted: ${granted}`);
 

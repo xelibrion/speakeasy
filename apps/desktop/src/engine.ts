@@ -30,13 +30,45 @@ export type EngineEvent =
 
 export type InjectionMode = "synthetic" | "paste";
 
+export type ModifierKey =
+  | "leftOption"
+  | "rightOption"
+  | "leftCommand"
+  | "rightCommand"
+  | "leftControl"
+  | "rightControl"
+  | "leftShift"
+  | "rightShift"
+  | "fn";
+
+/** A held modifier, or a conventional chord. See `core::config::Hotkey`. */
+export type Hotkey =
+  | { kind: "modifier"; key: ModifierKey }
+  | { kind: "accelerator"; accelerator: string };
+
 export type Config = {
-  hotkey: string;
+  hotkey: Hotkey;
   modelPath: string | null;
   language: string | null;
   injectionMode: InjectionMode;
   minRecordingMs: number;
 };
+
+const MODIFIER_LABELS: Record<ModifierKey, string> = {
+  leftOption: "Left Option",
+  rightOption: "Right Option",
+  leftCommand: "Left Command",
+  rightCommand: "Right Command",
+  leftControl: "Left Control",
+  rightControl: "Right Control",
+  leftShift: "Left Shift",
+  rightShift: "Right Shift",
+  fn: "Fn",
+};
+
+export function hotkeyLabel(hotkey: Hotkey): string {
+  return hotkey.kind === "modifier" ? MODIFIER_LABELS[hotkey.key] : hotkey.accelerator;
+}
 
 const EVENT = "speakeasy://event";
 

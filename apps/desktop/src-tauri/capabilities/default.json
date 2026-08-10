@@ -7,7 +7,6 @@
     "core:default",
     "core:event:default",
     "core:window:allow-show",
-    "core:window:allow-hide",
-    "global-shortcut:default"
+    "core:window:allow-hide"
   ]
 }

@@ -30,10 +30,10 @@ whisper-rs = "0.14"
 
 tauri = { version = "2", features = ["tray-icon"] }
 tauri-build = "2"
-tauri-plugin-global-shortcut = "2"
 
 x11rb = "0.13"
 core-graphics = "0.24"
+core-foundation = "0.10"
 
 [profile.release]
 lto = true

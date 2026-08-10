@@ -15,13 +15,22 @@ mod linux;
 #[cfg(target_os = "linux")]
 use linux as sys;
 
-use speakeasy_core::{Config, TextSink};
+use speakeasy_core::{Config, HotkeyListener, TextSink};
 
 pub use audio::CpalAudioSource;
 
 /// The platform's text injector, configured for the chosen strategy.
 pub fn text_sink(config: &Config) -> Box<dyn TextSink> {
     sys::text_sink(config.injection_mode)
+}
+
+/// The platform's push-to-talk listener.
+///
+/// This lives here rather than in the shell because binding a bare, side-
+/// specific modifier needs OS-level input monitoring that no cross-platform
+/// shortcut library exposes.
+pub fn hotkey_listener() -> Box<dyn HotkeyListener> {
+    sys::hotkey_listener()
 }
 
 /// Whether the OS-level permissions needed for capture and injection have been

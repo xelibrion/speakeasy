@@ -3,9 +3,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Config {
-    /// Push-to-talk binding, in the shell's accelerator syntax
-    /// (e.g. `"CmdOrCtrl+Alt+Space"`).
-    pub hotkey: String,
+    /// What the user holds to talk.
+    pub hotkey: Hotkey,
 
     /// Path to the whisper model weights. `None` means first-run download.
     pub model_path: Option<String>,
@@ -18,6 +17,67 @@ pub struct Config {
 
     /// Drop recordings shorter than this — usually an accidental hotkey tap.
     pub min_recording_ms: u64,
+}
+
+/// The push-to-talk binding.
+///
+/// Two shapes, because they are registered by completely different machinery:
+/// a bare modifier needs a low-level event tap, while an accelerator can go
+/// through an ordinary global-shortcut registration.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum Hotkey {
+    /// A single modifier held down. The natural shape for push-to-talk, and
+    /// the only one that can tell the left key from the right.
+    Modifier { key: ModifierKey },
+
+    /// A conventional chord such as `"CmdOrCtrl+Alt+Space"`. Cannot express a
+    /// bare modifier, and cannot distinguish sides.
+    Accelerator { accelerator: String },
+}
+
+/// A modifier key, with the side it sits on.
+///
+/// macOS reports side through IOKit's device-dependent flag bits; the ordinary
+/// `CGEventFlags` only say "Option is down" without saying which one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ModifierKey {
+    LeftOption,
+    RightOption,
+    LeftCommand,
+    RightCommand,
+    LeftControl,
+    RightControl,
+    LeftShift,
+    RightShift,
+    Fn,
+}
+
+impl ModifierKey {
+    /// Human-readable name for settings UI and logs.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::LeftOption => "Left Option",
+            Self::RightOption => "Right Option",
+            Self::LeftCommand => "Left Command",
+            Self::RightCommand => "Right Command",
+            Self::LeftControl => "Left Control",
+            Self::RightControl => "Right Control",
+            Self::LeftShift => "Left Shift",
+            Self::RightShift => "Right Shift",
+            Self::Fn => "Fn",
+        }
+    }
+}
+
+impl Hotkey {
+    pub fn label(&self) -> String {
+        match self {
+            Self::Modifier { key } => key.label().to_string(),
+            Self::Accelerator { accelerator } => accelerator.clone(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -35,7 +95,11 @@ pub enum InjectionMode {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            hotkey: "CmdOrCtrl+Alt+Space".to_string(),
+            // Right Option is a good default: it is a modifier most layouts
+            // leave free, and holding it reads naturally as push-to-talk.
+            hotkey: Hotkey::Modifier {
+                key: ModifierKey::RightOption,
+            },
             model_path: None,
             language: None,
             injection_mode: InjectionMode::Paste,

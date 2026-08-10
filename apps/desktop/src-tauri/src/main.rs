@@ -33,13 +33,17 @@ fn main() {
     let engine = Engine::new(Box::new(audio), Box::new(transcriber), sink, config.clone());
 
     tauri::Builder::default()
-        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .manage(engine.clone())
         .setup(move |app| {
             // Core events → webview events. The only place the two worlds meet.
             bridge::forward_events(app.handle().clone(), engine.clone());
             tray::attach(app.handle(), &engine)?;
-            hotkey::register(app.handle().clone(), engine.clone(), &config.hotkey)?;
+            // A failure here is usually a missing Accessibility grant. Log it
+            // and keep running: the tray still works, and the settings window
+            // is where the user is told what to fix.
+            if let Err(err) = hotkey::register(engine.clone(), &config.hotkey) {
+                tracing::warn!(%err, "push-to-talk is not bound");
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
