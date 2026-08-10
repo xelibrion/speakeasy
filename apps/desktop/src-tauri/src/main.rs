@@ -33,6 +33,15 @@ fn config_path() -> std::path::PathBuf {
     base.join("com.speakeasy.app").join("config.json")
 }
 
+/// Downloaded weights. A sibling of `config.json`, so they survive reinstalling
+/// the app and are found again by the next version.
+fn models_dir(config: &std::path::Path) -> std::path::PathBuf {
+    config
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."))
+        .join("models")
+}
+
 /// Settings file, with the model path still overridable from the environment
 /// so the pipeline can be exercised without touching the file.
 ///
@@ -45,7 +54,7 @@ fn load_config(path: &std::path::Path) -> Config {
         Config::default()
     });
     if let Ok(model) = std::env::var("SPEAKEASY_MODEL") {
-        config.model_path = Some(model);
+        config.model = speakeasy_core::ModelChoice::Local { path: model };
     }
     config
 }
@@ -62,25 +71,21 @@ fn main() {
     let config = load_config(&settings);
 
     let audio = CpalAudioSource::new().expect("audio source should be constructible");
-    // Loading weights takes seconds and can fail; an unloaded transcriber is a
-    // valid state that reports ModelNotLoaded, so a bad path is not fatal.
-    let transcriber = match &config.model_path {
-        Some(path) => match WhisperTranscriber::load(std::path::Path::new(path)) {
-            Ok(transcriber) => transcriber,
-            Err(err) => {
-                tracing::warn!(%err, "could not load the model; dictation is disabled");
-                WhisperTranscriber::unloaded()
-            }
-        },
-        None => {
-            tracing::warn!("no model configured; set SPEAKEASY_MODEL or modelPath in config");
-            WhisperTranscriber::unloaded()
-        }
-    };
+    // Always unloaded. Which weights to use, whether they are on disk, and
+    // whether to fetch them are all `Engine::ensure_model`'s decision — so
+    // every shell gets identical first-run behaviour without writing it twice.
+    let transcriber = std::sync::Arc::new(WhisperTranscriber::unloaded());
     let sink = speakeasy_platform::text_sink(&config);
 
-    let engine = Engine::new(Box::new(audio), Box::new(transcriber), sink, config.clone())
-        .persisting_to(settings);
+    let engine = Engine::new(
+        Box::new(audio),
+        transcriber,
+        sink,
+        Box::new(speakeasy_models::HttpFetcher::new()),
+        models_dir(&settings),
+        config.clone(),
+    )
+    .persisting_to(settings);
 
     tauri::Builder::default()
         .manage(engine.clone())
@@ -109,6 +114,10 @@ fn main() {
             if let Err(err) = hotkey::register(engine.clone(), &config.hotkey) {
                 tracing::warn!(%err, "push-to-talk is not bound");
             }
+            // Last, and after the bridge and tray are up: on a fresh install
+            // this starts a download immediately, and the progress has to have
+            // somewhere to land.
+            engine.ensure_model();
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -118,6 +127,13 @@ fn main() {
             commands::audio_level,
             commands::audio_spectrum,
             commands::cancel,
+            commands::model_catalog,
+            commands::model_status,
+            commands::installed_models,
+            commands::install_model,
+            commands::select_model,
+            commands::cancel_model_download,
+            commands::remove_model,
             commands::permissions_granted,
             commands::open_permission_settings,
         ])

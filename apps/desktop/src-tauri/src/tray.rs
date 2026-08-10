@@ -14,23 +14,28 @@
 
 use std::sync::Mutex;
 
-use speakeasy_core::{Engine, State};
+use speakeasy_core::{Engine, ModelStatus, State};
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::{AppHandle, Manager};
 
 /// The status line, kept so the bridge can rewrite its text.
 static STATUS_ITEM: Mutex<Option<MenuItem<tauri::Wry>>> = Mutex::new(None);
 
+/// The two things the status line reports on.
+///
+/// Both are kept because either can change without the other, and the line has
+/// to be rendered from both — a download finishing must not reset the dictation
+/// state shown, and vice versa.
+static LAST_STATE: Mutex<Option<State>> = Mutex::new(None);
+static MODEL_STATUS: Mutex<Option<ModelStatus>> = Mutex::new(None);
+
 const TRAY_ID: &str = "main";
 
 pub fn attach(app: &AppHandle, engine: &Engine) -> Result<(), Box<dyn std::error::Error>> {
-    let status = MenuItem::with_id(
-        app,
-        "status",
-        status_text(&engine.state()),
-        false,
-        None::<&str>,
-    )?;
+    *LAST_STATE.lock().expect("last state mutex poisoned") = Some(engine.state());
+    *MODEL_STATUS.lock().expect("model status mutex poisoned") = Some(engine.model_status());
+
+    let status = MenuItem::with_id(app, "status", status_text(), false, None::<&str>)?;
     let settings = MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit Speakeasy", true, Some("CmdOrCtrl+Q"))?;
 
@@ -68,24 +73,63 @@ pub fn attach(app: &AppHandle, engine: &Engine) -> Result<(), Box<dyn std::error
 ///
 /// Call on the main thread, like everything else that touches AppKit.
 pub fn refresh(state: &State) {
+    *LAST_STATE.lock().expect("last state mutex poisoned") = Some(state.clone());
+    render();
+}
+
+/// Rewrite the status line after a model status change.
+pub fn refresh_model(status: &ModelStatus) {
+    *MODEL_STATUS.lock().expect("model status mutex poisoned") = Some(status.clone());
+    render();
+}
+
+fn render() {
     if let Some(item) = STATUS_ITEM
         .lock()
         .expect("status item mutex poisoned")
         .as_ref()
     {
-        if let Err(err) = item.set_text(status_text(state)) {
+        if let Err(err) = item.set_text(status_text()) {
             tracing::warn!(%err, "could not update tray status");
         }
     }
 }
 
-fn status_text(state: &State) -> String {
-    match state {
-        State::Idle => "Ready".to_string(),
-        State::Recording => "Recording…".to_string(),
-        State::Transcribing => "Transcribing…".to_string(),
-        State::Injecting => "Inserting text…".to_string(),
-        State::Failed { error } => format!("Error: {error}"),
+/// What the menu bar says.
+///
+/// The model line wins whenever there is one worth showing: downloading is the
+/// more urgent and more transient thing to say, and while it runs the dictation
+/// state is almost always `Idle` anyway. A model that is absent or broken also
+/// wins, because in that state "Ready" would be a lie.
+fn status_text() -> String {
+    match MODEL_STATUS
+        .lock()
+        .expect("model status mutex poisoned")
+        .as_ref()
+    {
+        Some(ModelStatus::Downloading {
+            id,
+            received,
+            total,
+        }) if *total > 0 => {
+            return format!("Downloading {id}… {}%", received * 100 / total);
+        }
+        Some(ModelStatus::Downloading { id, .. }) => return format!("Downloading {id}…"),
+        Some(ModelStatus::Failed { error }) => return format!("Model error: {error}"),
+        Some(ModelStatus::Absent) => return "No model loaded".to_string(),
+        Some(ModelStatus::Ready { .. }) | None => {}
+    }
+
+    match LAST_STATE
+        .lock()
+        .expect("last state mutex poisoned")
+        .as_ref()
+    {
+        Some(State::Recording) => "Recording…".to_string(),
+        Some(State::Transcribing) => "Transcribing…".to_string(),
+        Some(State::Injecting) => "Inserting text…".to_string(),
+        Some(State::Failed { error }) => format!("Error: {error}"),
+        Some(State::Idle) | None => "Ready".to_string(),
     }
 }
 

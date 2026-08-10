@@ -9,6 +9,7 @@ license.workspace = true
 # if a command body is more than a delegation, it belongs in the core.
 [dependencies]
 speakeasy-core = { workspace = true }
+speakeasy-models = { workspace = true }
 speakeasy-platform = { workspace = true }
 speakeasy-whisper = { workspace = true }
 

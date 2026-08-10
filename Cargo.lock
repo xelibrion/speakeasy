@@ -3381,6 +3381,7 @@ dependencies = [
  "serde",
  "serde_json",
  "speakeasy-core",
+ "speakeasy-models",
  "speakeasy-platform",
  "speakeasy-whisper",
  "tauri",

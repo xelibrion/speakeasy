@@ -51,6 +51,16 @@ pub fn forward_events(app: AppHandle, engine: Engine) {
                     tracing::warn!(%err, "could not schedule the UI update");
                 }
             }
+            // Same main-thread hop as above, and for the same reason: this
+            // rewrites a menu item. Already throttled by the core, so this is
+            // a handful of hops per download rather than one per chunk.
+            if let Event::ModelStatusChanged { status } = &event {
+                let status = status.clone();
+                if let Err(err) = app.run_on_main_thread(move || tray::refresh_model(&status)) {
+                    tracing::warn!(%err, "could not schedule the model status update");
+                }
+            }
+
             if let Err(err) = app.emit(EVENT, &event) {
                 tracing::warn!(%err, "failed to forward engine event to webview");
             }
