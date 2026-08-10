@@ -59,3 +59,31 @@ fn transcribes_real_speech() {
         assert!(lower.contains(word), "expected {word:?} in {text:?}");
     }
 }
+
+/// Switching models without a restart is the whole point of `Transcriber::load`.
+#[test]
+#[ignore = "needs SPEAKEASY_MODEL"]
+fn load_swaps_the_model_in_place() {
+    let model = std::env::var("SPEAKEASY_MODEL").expect("set SPEAKEASY_MODEL");
+
+    let transcriber = WhisperTranscriber::unloaded();
+    assert!(!transcriber.is_ready(), "starts with no weights");
+
+    Transcriber::load(&transcriber, Path::new(&model)).expect("load should succeed");
+
+    assert!(transcriber.is_ready(), "weights are live without a restart");
+}
+
+/// The reason the context is built before the lock is taken: a model that will
+/// not load must not cost the user the one that already works.
+#[test]
+#[ignore = "needs SPEAKEASY_MODEL"]
+fn a_failed_load_leaves_the_previous_model_working() {
+    let model = std::env::var("SPEAKEASY_MODEL").expect("set SPEAKEASY_MODEL");
+
+    let transcriber = WhisperTranscriber::load(Path::new(&model)).expect("model should load");
+    let err = Transcriber::load(&transcriber, Path::new("/nonexistent/ggml-nope.bin"))
+        .expect_err("a missing file should fail to load");
+
+    assert!(transcriber.is_ready(), "the working model survived: {err}");
+}

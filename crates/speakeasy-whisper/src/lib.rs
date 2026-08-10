@@ -15,6 +15,16 @@ pub struct WhisperTranscriber {
 impl WhisperTranscriber {
     /// Load weights from disk. Expensive — do it once, off the UI thread.
     pub fn load(model_path: &Path) -> Result<Self> {
+        Ok(Self {
+            context: Mutex::new(Some(Self::open(model_path)?)),
+        })
+    }
+
+    /// Build a context without touching any that already exists.
+    ///
+    /// Split out so [`Transcriber::load`] can construct the replacement before
+    /// it takes the lock. See that method for why the order matters.
+    fn open(model_path: &Path) -> Result<WhisperContext> {
         // whisper.cpp and ggml print progress straight to stdout otherwise,
         // which is no use in a menu-bar app. This routes them through `log`,
         // which tracing-subscriber picks up.
@@ -36,9 +46,7 @@ impl WhisperTranscriber {
             .map_err(|err| Error::Transcription(format!("could not load {path}: {err}")))?;
 
         tracing::info!(model = path, "whisper model loaded");
-        Ok(Self {
-            context: Mutex::new(Some(context)),
-        })
+        Ok(context)
     }
 
     /// An unloaded transcriber, so the app can start without weights and
@@ -106,5 +114,17 @@ impl Transcriber for WhisperTranscriber {
             .lock()
             .expect("whisper context mutex poisoned")
             .is_some()
+    }
+
+    fn load(&self, path: &Path) -> Result<()> {
+        // Built *before* the lock is taken, and deliberately so. On failure we
+        // return without ever touching `self`, so a swap that goes wrong costs
+        // the user nothing — which is what lets the download flow verify and
+        // load a new model while the old one keeps serving dictation. It also
+        // means a slow load does not hold the mutex against an in-flight
+        // transcription.
+        let context = Self::open(path)?;
+        *self.context.lock().expect("whisper context mutex poisoned") = Some(context);
+        Ok(())
     }
 }
