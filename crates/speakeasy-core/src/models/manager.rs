@@ -249,6 +249,14 @@ impl ModelManager {
         }
     }
 
+    /// Load weights without touching the reported status.
+    ///
+    /// For the fallback path: dictation should start working again, but the
+    /// status must keep showing why the user is not on the model they picked.
+    pub fn load_only(&self, path: &Path) -> Result<()> {
+        self.transcriber.load(path)
+    }
+
     /// Streamed rather than read whole: the largest catalog entry is over a
     /// gigabyte, and this runs on every install.
     fn digest_matches(&self, path: &Path, expected: &str) -> Result<bool> {
@@ -460,8 +468,10 @@ mod tests {
         let dir = TempDir::new("install-badswap");
         let body = b"pretend weights";
         let (manager, transcriber) = manager_serving(&dir, body);
+        let previous = dir.join("ggml-old.bin");
+        std::fs::write(&previous, b"old weights").expect("write should succeed");
         transcriber
-            .load(Path::new("/previous/ggml-old.bin"))
+            .load(&previous)
             .expect("the previous model loads");
         transcriber.fail_next_load(Error::Transcription("unsupported format".into()));
 
@@ -472,7 +482,7 @@ mod tests {
         assert!(matches!(err, Error::Transcription(_)));
         assert_eq!(
             transcriber.loaded(),
-            Some(PathBuf::from("/previous/ggml-old.bin")),
+            Some(previous),
             "the working model is still the live one"
         );
     }

@@ -144,6 +144,15 @@ impl Transcriber for FakeTranscriber {
         {
             return Err(error);
         }
+        // Real implementations refuse a path that is not there, and callers
+        // depend on that — the engine's fallback only runs because loading a
+        // missing file fails. A fake that accepts anything would hide it.
+        if !path.exists() {
+            return Err(Error::Transcription(format!(
+                "no model at {}",
+                path.display()
+            )));
+        }
         *self.loaded.lock().expect("loaded mutex poisoned") = Some(path.to_path_buf());
         *self.ready.lock().expect("ready mutex poisoned") = true;
         Ok(())

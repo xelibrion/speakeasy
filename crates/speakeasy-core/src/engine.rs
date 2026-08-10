@@ -9,10 +9,12 @@ use std::time::Instant;
 
 use std::path::PathBuf;
 
-use crate::config::{ActivationMode, Config, WidgetPosition};
+use crate::config::{ActivationMode, Config, ModelChoice, WidgetPosition};
 use crate::error::{Error, Result};
-use crate::event::{Event, State};
-use crate::ports::{AudioSource, HotkeyEvent, TextSink, Transcriber};
+use crate::event::{Event, ModelStatus, State};
+use crate::models::catalog::{self, ModelId, ModelInfo, CATALOG};
+use crate::models::ModelManager;
+use crate::ports::{AudioSource, HotkeyEvent, ModelFetcher, TextSink, Transcriber};
 
 /// What a hotkey event means, given the activation mode and the current state.
 ///
@@ -35,8 +37,11 @@ pub struct Engine {
 
 struct Inner {
     audio: Box<dyn AudioSource>,
-    transcriber: Box<dyn Transcriber>,
+    /// `Arc` rather than `Box` so [`ModelManager`] can hold the same instance
+    /// and swap its weights without going through the engine.
+    transcriber: Arc<dyn Transcriber>,
     sink: Box<dyn TextSink>,
+    models: ModelManager,
     config: Mutex<Config>,
     /// Where to persist config changes. `None` keeps the engine in memory only,
     /// which is what the tests want.
@@ -49,22 +54,37 @@ struct Inner {
 impl Engine {
     pub fn new(
         audio: Box<dyn AudioSource>,
-        transcriber: Box<dyn Transcriber>,
+        transcriber: Arc<dyn Transcriber>,
         sink: Box<dyn TextSink>,
+        fetcher: Box<dyn ModelFetcher>,
+        models_dir: PathBuf,
         config: Config,
     ) -> Self {
-        Self {
-            inner: Arc::new(Inner {
-                audio,
-                transcriber,
-                sink,
-                config: Mutex::new(config),
-                config_path: Mutex::new(None),
-                state: Mutex::new(State::Idle),
-                started_at: Mutex::new(None),
-                subscribers: Mutex::new(Vec::new()),
-            }),
-        }
+        let inner = Arc::new(Inner {
+            audio,
+            transcriber: transcriber.clone(),
+            sink,
+            models: ModelManager::new(fetcher, transcriber, models_dir),
+            config: Mutex::new(config),
+            config_path: Mutex::new(None),
+            state: Mutex::new(State::Idle),
+            started_at: Mutex::new(None),
+            subscribers: Mutex::new(Vec::new()),
+        });
+
+        // The manager's status changes become ordinary events, so a shell
+        // learns about a download the same way it learns about a state change.
+        //
+        // `Weak` because this closure lives *inside* the `Inner` it reports to;
+        // an `Arc` here would be a cycle, and the engine would never drop.
+        let weak = Arc::downgrade(&inner);
+        inner.models.on_status(Box::new(move |status| {
+            if let Some(inner) = weak.upgrade() {
+                inner.emit(Event::ModelStatusChanged { status });
+            }
+        }));
+
+        Self { inner }
     }
 
     /// Observe engine progress. Every subscriber receives every event; a
@@ -282,6 +302,142 @@ impl Engine {
         self.transition(State::Idle);
     }
 
+    /// Every model the user could choose to download.
+    pub fn catalog(&self) -> &'static [ModelInfo] {
+        CATALOG.as_slice()
+    }
+
+    /// Catalog models already on disk.
+    pub fn installed_models(&self) -> Vec<ModelId> {
+        self.inner.models.installed()
+    }
+
+    pub fn model_status(&self) -> ModelStatus {
+        self.inner.models.status()
+    }
+
+    /// Start downloading `id` and return immediately.
+    ///
+    /// Fire-and-forget, unlike [`Engine::finish_recording`]: there is no return
+    /// value worth waiting for, because every outcome arrives as
+    /// [`Event::ModelStatusChanged`]. That is also what lets a shell's IPC
+    /// command stay a one-line delegation.
+    ///
+    /// Config is written *before* the download starts, because it records what
+    /// the user wants rather than what succeeded — which is what makes an
+    /// interrupted download resume on the next launch.
+    pub fn install_model(&self, id: ModelId) {
+        let previous = self.config().model;
+        self.set_model_choice(ModelChoice::Catalog { id: id.clone() });
+
+        let engine = self.clone();
+        std::thread::spawn(move || match engine.inner.models.install(&id) {
+            Ok(Some(_)) => {}
+            // Cancelled: the user said never mind, so the desired model goes
+            // back to what it was. Without this the next launch would resume
+            // the transfer they just abandoned.
+            Ok(None) => engine.set_model_choice(previous),
+            // Failed: config deliberately keeps naming the wanted model, so a
+            // retry is one click and the next launch tries again. But dictation
+            // should not be dead in the meantime.
+            Err(err) => {
+                tracing::warn!(%err, %id, "could not install the model");
+                engine.fall_back_to_any_installed();
+            }
+        });
+    }
+
+    /// Switch to a model that needs no download: a local file, or a catalog
+    /// entry already on disk.
+    pub fn select_model(&self, choice: ModelChoice) {
+        self.set_model_choice(choice.clone());
+        let Some(path) = self.inner.models.path_for(&choice) else {
+            return;
+        };
+        if let Err(err) = self.inner.models.activate(&path, &label_for(&choice)) {
+            tracing::warn!(%err, "could not switch models");
+        }
+    }
+
+    pub fn cancel_model_download(&self) {
+        self.inner.models.cancel();
+    }
+
+    pub fn remove_model(&self, id: &ModelId) -> Result<()> {
+        self.inner.models.remove(id)
+    }
+
+    /// Reconcile desired state ([`Config::model`]) against what is on disk.
+    ///
+    /// Called once at startup. First run is not a special case: a fresh config
+    /// wants the default catalog model, nothing is installed, so this downloads
+    /// it — the same path a mid-session switch takes.
+    pub fn ensure_model(&self) {
+        let choice = self.config().model;
+        let path = self.inner.models.path_for(&choice);
+
+        if let Some(path) = &path {
+            if path.is_file() {
+                if self
+                    .inner
+                    .models
+                    .activate(path, &label_for(&choice))
+                    .is_ok()
+                {
+                    return;
+                }
+                // `activate` has already reported why.
+                self.fall_back_to_any_installed();
+                return;
+            }
+        }
+
+        match choice {
+            // Not on disk, and we know where to get it.
+            ModelChoice::Catalog { id } => self.install_model(id),
+            // A missing local file is nothing a download can fix. Let `activate`
+            // report why, then keep dictation alive if anything else is here.
+            ModelChoice::Local { .. } => {
+                if let Some(path) = &path {
+                    let _ = self.inner.models.activate(path, &label_for(&choice));
+                }
+                self.fall_back_to_any_installed();
+            }
+        }
+    }
+
+    /// Load whatever is installed so the hotkey still works.
+    ///
+    /// Transcribing on a model the user did not pick, while the status says so,
+    /// beats not transcribing at all. Deliberately loads *without* touching the
+    /// status: the user needs to keep seeing why they are not on the model they
+    /// chose.
+    fn fall_back_to_any_installed(&self) {
+        let Some(id) = self.inner.models.installed().into_iter().next() else {
+            return;
+        };
+        let choice = ModelChoice::Catalog { id: id.clone() };
+        let Some(path) = self.inner.models.path_for(&choice) else {
+            return;
+        };
+
+        match self.inner.models.load_only(&path) {
+            Ok(()) => tracing::warn!(%id, "falling back to an installed model"),
+            Err(err) => tracing::warn!(%err, %id, "the fallback model would not load either"),
+        }
+    }
+
+    fn set_model_choice(&self, choice: ModelChoice) {
+        {
+            let mut config = self.inner.config.lock().expect("config mutex poisoned");
+            if config.model == choice {
+                return;
+            }
+            config.model = choice;
+        }
+        self.persist();
+    }
+
     /// Current input level, for the recording indicator.
     pub fn audio_level(&self) -> f32 {
         self.inner.audio.level()
@@ -314,11 +470,34 @@ impl Engine {
     }
 
     fn emit(&self, event: Event) {
-        let mut subscribers = self
-            .inner
-            .subscribers
-            .lock()
-            .expect("subscribers mutex poisoned");
+        self.inner.emit(event);
+    }
+}
+
+/// How to name a model in the UI.
+///
+/// Lives here rather than in the shell because a catalog id and a local path
+/// have to render in the same tray line, and every shell would otherwise write
+/// this twice.
+fn label_for(choice: &ModelChoice) -> String {
+    match choice {
+        // An id the catalog has never heard of still needs a name; the id
+        // itself is the most honest one available.
+        ModelChoice::Catalog { id } => catalog::find(id)
+            .map(|info| info.label.to_string())
+            .unwrap_or_else(|| id.to_string()),
+        ModelChoice::Local { path } => std::path::Path::new(path)
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| path.clone()),
+    }
+}
+
+impl Inner {
+    /// On `Inner` rather than `Engine` so the model status callback, which only
+    /// holds a `Weak<Inner>`, can publish without an engine handle.
+    fn emit(&self, event: Event) {
+        let mut subscribers = self.subscribers.lock().expect("subscribers mutex poisoned");
         subscribers.retain(|tx| tx.send(event.clone()).is_ok());
     }
 }
@@ -326,20 +505,48 @@ impl Engine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fakes::{FakeAudio, FakeSink, FakeTranscriber};
+    use crate::fakes::{FakeAudio, FakeFetcher, FakeSink, FakeTranscriber};
+    use crate::testing::TempDir;
+
+    /// A models directory for tests that never touch one.
+    ///
+    /// Deliberately not created: `installed()` on a directory that does not
+    /// exist is empty, which is what these tests want, and nothing here writes
+    /// to it.
+    fn unused_models_dir() -> PathBuf {
+        std::env::temp_dir().join("speakeasy-engine-tests-no-models")
+    }
 
     fn engine(transcript: &str) -> (Engine, Arc<FakeSink>) {
         let sink = Arc::new(FakeSink::default());
         let engine = Engine::new(
             Box::new(FakeAudio::with_samples(vec![0.0; 16_000])),
-            Box::new(FakeTranscriber::returning(transcript)),
+            Arc::new(FakeTranscriber::returning(transcript)),
             Box::new(sink.clone()),
+            Box::new(FakeFetcher::serving(Vec::new())),
+            unused_models_dir(),
             Config {
                 min_recording_ms: 0,
                 ..Config::default()
             },
         );
         (engine, sink)
+    }
+
+    /// Poll until `condition` holds, or fail.
+    ///
+    /// `install_model` spawns, so the assertions that follow it cannot run
+    /// immediately. Polling with a generous ceiling beats a fixed sleep, which
+    /// is either flaky or slow.
+    fn wait_until(what: &str, condition: impl Fn() -> bool) {
+        let deadline = Instant::now() + std::time::Duration::from_secs(5);
+        while Instant::now() < deadline {
+            if condition() {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        panic!("timed out waiting for {what}");
     }
 
     #[test]
@@ -416,8 +623,10 @@ mod tests {
         let sink = Arc::new(FakeSink::default());
         let engine = Engine::new(
             Box::new(FakeAudio::with_samples(vec![0.0; 16_000])),
-            Box::new(FakeTranscriber::returning("oops")),
+            Arc::new(FakeTranscriber::returning("oops")),
             Box::new(sink.clone()),
+            Box::new(FakeFetcher::serving(Vec::new())),
+            unused_models_dir(),
             Config {
                 min_recording_ms: 60_000,
                 ..Config::default()
@@ -518,8 +727,10 @@ mod tests {
         let sink = Arc::new(FakeSink::failing(Error::SecureInputActive));
         let engine = Engine::new(
             Box::new(FakeAudio::with_samples(vec![0.0; 16_000])),
-            Box::new(FakeTranscriber::returning("hello")),
+            Arc::new(FakeTranscriber::returning("hello")),
             Box::new(sink.clone()),
+            Box::new(FakeFetcher::serving(Vec::new())),
+            unused_models_dir(),
             Config {
                 min_recording_ms: 0,
                 ..Config::default()
@@ -540,12 +751,180 @@ mod tests {
         );
     }
 
+    /// Builds an engine over a real directory, so the model paths resolve.
+    fn engine_with_models(
+        dir: &TempDir,
+        fetcher: FakeFetcher,
+        config: Config,
+    ) -> (Engine, Arc<FakeTranscriber>) {
+        let transcriber = Arc::new(FakeTranscriber::not_ready());
+        let engine = Engine::new(
+            Box::new(FakeAudio::with_samples(vec![0.0; 16_000])),
+            transcriber.clone(),
+            Box::new(FakeSink::default()),
+            Box::new(fetcher),
+            dir.0.clone(),
+            config,
+        );
+        (engine, transcriber)
+    }
+
+    #[test]
+    fn selecting_a_local_model_records_it_and_loads_it() {
+        let dir = TempDir::new("engine-select-local");
+        let weights = dir.join("mine.bin");
+        std::fs::write(&weights, b"weights").expect("write should succeed");
+        let (engine, transcriber) =
+            engine_with_models(&dir, FakeFetcher::serving(Vec::new()), Config::default());
+
+        engine.select_model(ModelChoice::Local {
+            path: weights.display().to_string(),
+        });
+
+        assert_eq!(
+            engine.config().model,
+            ModelChoice::Local {
+                path: weights.display().to_string()
+            }
+        );
+        assert_eq!(transcriber.loaded(), Some(weights));
+        assert!(matches!(engine.model_status(), ModelStatus::Ready { .. }));
+    }
+
+    #[test]
+    fn ensure_model_loads_a_model_that_is_already_on_disk() {
+        let dir = TempDir::new("engine-ensure-present");
+        let weights = dir.join("mine.bin");
+        std::fs::write(&weights, b"weights").expect("write should succeed");
+        let (engine, transcriber) = engine_with_models(
+            &dir,
+            FakeFetcher::serving(Vec::new()),
+            Config {
+                model: ModelChoice::Local {
+                    path: weights.display().to_string(),
+                },
+                ..Config::default()
+            },
+        );
+
+        engine.ensure_model();
+
+        assert_eq!(transcriber.loaded(), Some(weights));
+        assert!(matches!(engine.model_status(), ModelStatus::Ready { .. }));
+    }
+
+    /// First run is not a special case: a fresh config wants a catalog model
+    /// that is not on disk, so `ensure_model` fetches it.
+    #[test]
+    fn ensure_model_downloads_the_wanted_model_when_it_is_absent() {
+        let dir = TempDir::new("engine-ensure-absent");
+        // The catalog's real digest for base.en, so verification passes only if
+        // the fetcher serves the real file — which it cannot. Serving the wrong
+        // bytes here would make this a verification test instead, so assert on
+        // the attempt rather than the outcome.
+        let fetcher = Arc::new(FakeFetcher::serving(b"not the real weights".to_vec()));
+        let transcriber = Arc::new(FakeTranscriber::not_ready());
+        let engine = Engine::new(
+            Box::new(FakeAudio::with_samples(vec![0.0; 16_000])),
+            transcriber.clone(),
+            Box::new(FakeSink::default()),
+            Box::new(fetcher.clone()),
+            dir.0.clone(),
+            Config::default(),
+        );
+
+        engine.ensure_model();
+
+        wait_until("the download to be attempted", || fetcher.calls() == 1);
+    }
+
+    /// Dictation must not be left dead because one model could not be had.
+    #[test]
+    fn ensure_model_falls_back_to_an_installed_model_when_the_wanted_one_fails() {
+        let dir = TempDir::new("engine-ensure-fallback");
+        // A catalog model is on disk, but config wants a local file that is not.
+        let installed = dir.join("ggml-base.en.bin");
+        std::fs::write(&installed, b"weights").expect("write should succeed");
+        let (engine, transcriber) = engine_with_models(
+            &dir,
+            FakeFetcher::serving(Vec::new()),
+            Config {
+                model: ModelChoice::Local {
+                    path: "/nonexistent/ggml-gone.bin".to_string(),
+                },
+                ..Config::default()
+            },
+        );
+
+        engine.ensure_model();
+
+        assert_eq!(
+            transcriber.loaded(),
+            Some(installed),
+            "the installed model was loaded so the hotkey still works"
+        );
+        assert!(
+            matches!(engine.model_status(), ModelStatus::Failed { .. }),
+            "but the status still says why this is not the chosen model"
+        );
+    }
+
+    /// Cancel means "never mind". Without the revert, the next launch would
+    /// resume the transfer the user just abandoned.
+    #[test]
+    fn cancelling_a_download_restores_the_previously_selected_model() {
+        let dir = TempDir::new("engine-cancel-reverts");
+        let weights = dir.join("mine.bin");
+        std::fs::write(&weights, b"weights").expect("write should succeed");
+        let local = ModelChoice::Local {
+            path: weights.display().to_string(),
+        };
+        let (engine, _transcriber) = engine_with_models(
+            &dir,
+            FakeFetcher::serving(b"some bytes".to_vec()),
+            Config {
+                model: local.clone(),
+                ..Config::default()
+            },
+        );
+
+        // Cancel before starting, so the fetcher observes the flag on its first
+        // chunk and the install reports a cancel deterministically.
+        engine.cancel_model_download();
+        engine.install_model(ModelId::new("base.en"));
+
+        wait_until("the config to revert", || engine.config().model == local);
+    }
+
+    #[test]
+    fn a_model_status_change_reaches_subscribers() {
+        let dir = TempDir::new("engine-status-event");
+        let weights = dir.join("mine.bin");
+        std::fs::write(&weights, b"weights").expect("write should succeed");
+        let (engine, _transcriber) =
+            engine_with_models(&dir, FakeFetcher::serving(Vec::new()), Config::default());
+        let events = engine.subscribe();
+
+        engine.select_model(ModelChoice::Local {
+            path: weights.display().to_string(),
+        });
+
+        assert!(
+            events
+                .try_iter()
+                .any(|event| matches!(event, Event::ModelStatusChanged { .. })),
+            "a shell learns about model changes the same way it learns about state"
+        );
+    }
+
     #[test]
     fn recording_is_refused_when_no_model_is_loaded() {
         let engine = Engine::new(
             Box::new(FakeAudio::with_samples(vec![])),
-            Box::new(FakeTranscriber::not_ready()),
+            Arc::new(FakeTranscriber::not_ready()),
             Box::new(FakeSink::default()),
+            Box::new(FakeFetcher::serving(Vec::new())),
+            unused_models_dir(),
             Config::default(),
         );
 
