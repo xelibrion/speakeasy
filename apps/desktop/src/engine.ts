@@ -72,6 +72,7 @@ export type EngineEvent =
   | { type: "transcript"; text: string }
   | { type: "injected"; chars: number }
   | { type: "failed"; error: EngineError }
+  | { type: "hotkeyChanged"; hotkey: Hotkey }
   | { type: "modelStatusChanged"; status: ModelStatus };
 
 /** A catalog id such as `"base.en"`. See `core::models::ModelId`. */
@@ -116,10 +117,21 @@ export type ModifierKey =
   | "rightShift"
   | "fn";
 
+/** Side-agnostic, unlike `ModifierKey`. See `core::hotkey::ChordMods`. */
+export type ChordMods = {
+  command: boolean;
+  option: boolean;
+  control: boolean;
+  shift: boolean;
+};
+
+/** A non-modifier key. See `core::hotkey::KeyCode`. */
+export type KeyCode = string;
+
 /** A held modifier, or a conventional chord. See `core::config::Hotkey`. */
 export type Hotkey =
   | { kind: "modifier"; key: ModifierKey }
-  | { kind: "accelerator"; accelerator: string };
+  | { kind: "chord"; mods: ChordMods; key: KeyCode };
 
 /** Hold the key, or tap it twice. See `core::config::ActivationMode`. */
 export type ActivationMode = "pushToTalk" | "toggle";
@@ -149,8 +161,41 @@ const MODIFIER_LABELS: Record<ModifierKey, string> = {
   fn: "Fn",
 };
 
+/** How a key name is written. Mirrors `core::hotkey::KeyCode::label`. */
+const KEY_LABELS: Record<string, string> = {
+  space: "Space",
+  return: "Return",
+  escape: "Escape",
+  tab: "Tab",
+  delete: "Delete",
+  left: "←",
+  right: "→",
+  up: "↑",
+  down: "↓",
+};
+
+/**
+ * Mirrors `Hotkey::label` in Rust, which renders the same binding for the tray.
+ * The two must agree: seeing one name in the menu bar and another in settings
+ * reads as two different bindings.
+ */
 export function hotkeyLabel(hotkey: Hotkey): string {
-  return hotkey.kind === "modifier" ? MODIFIER_LABELS[hotkey.key] : hotkey.accelerator;
+  if (hotkey.kind === "modifier") return MODIFIER_LABELS[hotkey.key];
+
+  // macOS order, regardless of how the chord was typed.
+  const symbols =
+    (hotkey.mods.control ? "⌃" : "") +
+    (hotkey.mods.option ? "⌥" : "") +
+    (hotkey.mods.shift ? "⇧" : "") +
+    (hotkey.mods.command ? "⌘" : "");
+
+  const key = hotkey.key;
+  // Digits serialise as `digit4`; letters and function keys are already their
+  // own names once upper-cased.
+  const name =
+    KEY_LABELS[key] ?? (key.startsWith("digit") ? key.slice(5) : key.toUpperCase());
+
+  return symbols + name;
 }
 
 /** How to describe the binding to the user, mode included. */
@@ -183,6 +228,17 @@ export const getAudioLevel = () => invoke<number>("audio_level");
 /** `SPECTRUM_BANDS` values, low frequency first. See `core::ports::AudioSource`. */
 export const getAudioSpectrum = () => invoke<number[]>("audio_spectrum");
 export const cancel = () => invoke<void>("cancel");
+export const setHotkey = (hotkey: Hotkey) => invoke<void>("set_hotkey", { hotkey });
+
+/**
+ * Arms the keyboard and returns; it does not resolve with the key.
+ *
+ * What was pressed comes back as a `hotkeyChanged` event, the same one a
+ * rebinding from anywhere else emits — so the pane has one thing to listen to.
+ */
+export const captureHotkey = () => invoke<void>("capture_hotkey");
+export const cancelHotkeyCapture = () => invoke<void>("cancel_hotkey_capture");
+
 export const permissionsGranted = () => invoke<boolean>("permissions_granted");
 export const openPermissionSettings = () => invoke<void>("open_permission_settings");
 
