@@ -109,7 +109,14 @@ fn main() {
             // the app in the Accessibility list, so without this the settings
             // pane the banner sends people to has no Speakeasy row to switch
             // on — which reads as the app being broken rather than unpermitted.
-            if !speakeasy_platform::request_permissions() {
+            // Two signals, logged together because they can disagree: the AX
+            // API caches per process, while the tap probe reports what is
+            // actually possible right now. `trusted=false can_tap=true` is that
+            // cache being stale; both false is a grant that really is missing.
+            let trusted = speakeasy_platform::request_permissions();
+            let can_tap = speakeasy_platform::permissions_granted();
+            tracing::info!(trusted, can_tap, "accessibility at startup");
+            if !can_tap {
                 tracing::warn!("Accessibility has not been granted; the hotkey will not bind");
             }
 

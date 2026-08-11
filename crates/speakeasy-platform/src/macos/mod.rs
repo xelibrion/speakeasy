@@ -163,11 +163,17 @@ extern "C" {
 
 /// Whether Accessibility has been granted.
 ///
+/// Answered by trying to create an event tap rather than by asking
+/// `AXIsProcessTrustedWithOptions`, which caches its result for the life of the
+/// process: grant the permission to a running app and that call goes on saying
+/// "not trusted" until restart. Building a tap is the capability itself and
+/// cannot be stale.
+///
 /// Only Accessibility. The microphone is a separate TCC grant, but macOS
 /// prompts for it by itself the first time the audio device is opened, so
 /// there is nothing here that asking early would improve.
 pub fn permissions_granted() -> bool {
-    accessibility_trusted(false)
+    hotkey::can_tap()
 }
 
 /// Ask for Accessibility, showing the system prompt if it is not granted.

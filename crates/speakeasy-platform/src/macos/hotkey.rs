@@ -145,6 +145,31 @@ fn raw_event(event_type: CGEventType, event: &CGEvent) -> Option<RawKeyEvent> {
     })
 }
 
+/// Whether an event tap can be created right now.
+///
+/// Used instead of `AXIsProcessTrustedWithOptions` for the *check*, because
+/// that call caches its answer for the life of the process on some macOS
+/// versions: grant the permission to a running app and it keeps reporting
+/// "not trusted" until restart, which is indistinguishable from the grant not
+/// having worked.
+///
+/// Creating a tap cannot go stale — it is the capability itself, and it is the
+/// exact thing that fails when the grant is missing. The tap is built,
+/// inspected and dropped without ever being added to a run loop, so nothing
+/// observes an event.
+pub(crate) fn can_tap() -> bool {
+    CGEventTap::new(
+        CGEventTapLocation::HID,
+        CGEventTapPlacement::HeadInsertEventTap,
+        // ListenOnly: this probe must never be in a position to swallow
+        // anything, however briefly.
+        CGEventTapOptions::ListenOnly,
+        vec![CGEventType::FlagsChanged],
+        |_proxy: CGEventTapProxy, _event_type, _event: &CGEvent| None,
+    )
+    .is_ok()
+}
+
 /// A run loop living on the tap's thread. `CFRunLoopStop` is safe to call from
 /// another thread, which is how `unregister` gets the thread to exit.
 struct RunLoopHandle(CFRunLoopRef);
