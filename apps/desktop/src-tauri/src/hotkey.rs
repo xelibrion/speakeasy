@@ -9,12 +9,32 @@
 //! configured activation mode and answers with a [`HotkeyAction`], so this
 //! layer stays a pure translator.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
 
 use speakeasy_core::{Engine, Hotkey, HotkeyAction, HotkeyListener};
 
 /// The listener owns an OS-level tap and must outlive `setup`.
 static LISTENER: OnceLock<Box<dyn HotkeyListener>> = OnceLock::new();
+
+/// Whether a binding is currently live.
+///
+/// Tracked here rather than asked of the listener, because the port has no way
+/// to answer it and adding one would mean every implementation carrying state
+/// only this caller wants.
+static BOUND: AtomicBool = AtomicBool::new(false);
+
+/// Bind only if nothing is bound — for a grant that arrived after startup.
+///
+/// Distinct from [`register`] because the settings window calls this every time
+/// it regains focus. Re-registering there would tear down a working tap and
+/// build a new one on each focus, leaving a gap where the hotkey is dead.
+pub fn bind_if_unbound(engine: Engine, hotkey: &Hotkey) -> Result<(), Box<dyn std::error::Error>> {
+    if BOUND.load(Ordering::SeqCst) {
+        return Ok(());
+    }
+    register(engine, hotkey)
+}
 
 fn listener() -> &'static dyn HotkeyListener {
     LISTENER
@@ -66,5 +86,6 @@ pub fn register(engine: Engine, hotkey: &Hotkey) -> Result<(), Box<dyn std::erro
         }),
     )?;
 
+    BOUND.store(true, Ordering::SeqCst);
     Ok(())
 }

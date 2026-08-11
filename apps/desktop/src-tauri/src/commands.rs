@@ -99,7 +99,7 @@ pub fn cancel_hotkey_capture() {
 /// above a key that does nothing.
 #[tauri::command]
 pub fn bind_hotkey(engine: TauriState<'_, Engine>) -> Result<(), String> {
-    crate::hotkey::register(engine.inner().clone(), &engine.config().hotkey)
+    crate::hotkey::bind_if_unbound(engine.inner().clone(), &engine.config().hotkey)
         .map_err(|err| err.to_string())
 }
 
