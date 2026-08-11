@@ -1,3 +1,4 @@
+use crate::config::Hotkey;
 use crate::error::Error;
 use crate::models::ModelId;
 
@@ -76,6 +77,15 @@ pub enum Event {
 
     Failed {
         error: Error,
+    },
+
+    /// The dictation binding changed.
+    ///
+    /// The shell re-registers on this. Core cannot do it itself: the listener
+    /// is owned by the shell, and moving it in here would mean the engine held
+    /// a listener holding a callback holding the engine.
+    HotkeyChanged {
+        hotkey: Hotkey,
     },
 
     /// Model download or load progress.

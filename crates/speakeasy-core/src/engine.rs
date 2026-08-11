@@ -9,7 +9,7 @@ use std::time::Instant;
 
 use std::path::PathBuf;
 
-use crate::config::{ActivationMode, Config, ModelChoice, WidgetPosition};
+use crate::config::{ActivationMode, Config, Hotkey, ModelChoice, WidgetPosition};
 use crate::error::{Error, Result};
 use crate::event::{Event, ModelStatus, State};
 use crate::models::catalog::{self, ModelId, ModelInfo, CATALOG};
@@ -145,6 +145,30 @@ impl Engine {
             config.widget_position = Some(position);
         }
         self.persist();
+    }
+
+    /// Rebind the dictation key.
+    ///
+    /// Its own method rather than a `set_config` round-trip, for the same
+    /// reason as [`Engine::set_widget_position`]: the settings window would
+    /// otherwise read, mutate and write back a whole config that a capture in
+    /// flight is also changing.
+    ///
+    /// Persisting is all this does. Actually binding the key belongs to
+    /// whoever owns the listener, which is the shell — it re-registers when it
+    /// sees the event.
+    pub fn set_hotkey(&self, hotkey: Hotkey) {
+        {
+            let mut config = self.inner.config.lock().expect("config mutex poisoned");
+            if config.hotkey == hotkey {
+                return;
+            }
+            config.hotkey = hotkey.clone();
+        }
+        self.persist();
+        // After the lock is released: a subscriber that calls back in while we
+        // still held it would deadlock.
+        self.emit(Event::HotkeyChanged { hotkey });
     }
 
     /// Best-effort: a config that cannot be written is worth a warning, not a
@@ -531,6 +555,26 @@ mod tests {
             },
         );
         (engine, sink)
+    }
+
+    #[test]
+    fn setting_the_hotkey_persists_it_and_announces_the_change() {
+        let (engine, _sink) = engine("anything");
+        let events = engine.subscribe();
+
+        let hotkey = Hotkey::Chord {
+            mods: crate::ChordMods {
+                command: true,
+                ..Default::default()
+            },
+            key: crate::KeyCode::Space,
+        };
+        engine.set_hotkey(hotkey.clone());
+
+        assert_eq!(engine.config().hotkey, hotkey);
+        assert!(events
+            .try_iter()
+            .any(|event| matches!(event, Event::HotkeyChanged { hotkey: ref h } if *h == hotkey)));
     }
 
     /// Poll until `condition` holds, or fail.
