@@ -7,7 +7,7 @@
 //!
 //! Wayland is out of scope; see the README.
 
-use speakeasy_core::{Error, Hotkey, HotkeyCallback, HotkeyListener, Result};
+use speakeasy_core::{CaptureCallback, Error, Hotkey, HotkeyCallback, HotkeyListener, Result};
 
 #[derive(Default)]
 pub struct X11Hotkeys;
@@ -32,4 +32,16 @@ impl HotkeyListener for X11Hotkeys {
     fn unregister(&self) -> Result<()> {
         Ok(())
     }
+
+    /// Nothing to capture with until `register` works. Failing loudly is what
+    /// the port contract asks of a capability an implementation lacks — a
+    /// capture that silently never reports would leave the settings window
+    /// waiting forever.
+    fn capture(&self, _on_captured: CaptureCallback) -> Result<()> {
+        Err(Error::Hotkey(
+            "X11 hotkey capture not implemented yet".to_string(),
+        ))
+    }
+
+    fn cancel_capture(&self) {}
 }

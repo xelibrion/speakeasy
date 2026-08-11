@@ -34,7 +34,10 @@ pub use error::{Error, Result};
 pub use event::{Event, ModelStatus, State};
 pub use hotkey::{ChordMods, KeyCode};
 pub use models::{ModelId, ModelInfo};
-pub use ports::{AudioSource, HotkeyCallback, HotkeyEvent, HotkeyListener, TextSink, Transcriber};
+pub use ports::{
+    AudioSource, CaptureCallback, HotkeyCallback, HotkeyEvent, HotkeyListener, TextSink,
+    Transcriber,
+};
 
 /// Sample rate every [`Transcriber`] implementation expects.
 pub const TARGET_SAMPLE_RATE: u32 = 16_000;

@@ -92,6 +92,10 @@ pub enum HotkeyEvent {
 /// the implementation listens on, so it must not block.
 pub type HotkeyCallback = Box<dyn Fn(HotkeyEvent) + Send + Sync>;
 
+/// Invoked once with whatever the user pressed, after which the capture
+/// disarms itself.
+pub type CaptureCallback = Box<dyn Fn(Hotkey) + Send + Sync>;
+
 /// A global push-to-talk binding.
 pub trait HotkeyListener: Send + Sync {
     /// Register `hotkey` and invoke `on_event` for press and release.
@@ -102,6 +106,18 @@ pub trait HotkeyListener: Send + Sync {
     fn register(&self, hotkey: &Hotkey, on_event: HotkeyCallback) -> Result<()>;
 
     fn unregister(&self) -> Result<()>;
+
+    /// Listen for one binding and report it, rather than matching the bound one.
+    ///
+    /// This is how the settings window asks "which key did the user press?".
+    ///
+    /// While armed, matching events are swallowed — otherwise binding `⌘Q`
+    /// would quit the app on the way in. Implementations must disarm after one
+    /// capture, and must not leave the keyboard captured if the caller
+    /// disappears: cancel on a timeout as well as on [`Self::cancel_capture`].
+    fn capture(&self, on_captured: CaptureCallback) -> Result<()>;
+
+    fn cancel_capture(&self);
 }
 
 /// Delivers text to whatever application currently has focus.

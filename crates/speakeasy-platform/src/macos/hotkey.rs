@@ -24,7 +24,8 @@ use core_graphics::event::{
     CGEventTap, CGEventTapLocation, CGEventTapOptions, CGEventTapPlacement, CGEventType,
 };
 use speakeasy_core::{
-    Error, Hotkey, HotkeyCallback, HotkeyEvent, HotkeyListener, ModifierKey, Result,
+    CaptureCallback, Error, Hotkey, HotkeyCallback, HotkeyEvent, HotkeyListener, ModifierKey,
+    Result,
 };
 
 /// Device-dependent modifier masks from IOKit's `NX_DEVICE*` constants. These
@@ -176,6 +177,16 @@ impl HotkeyListener for MacHotkeys {
         }
         Ok(())
     }
+
+    /// Capture arrives with the tap rework; until then, fail rather than leave
+    /// the settings window waiting on a report that never comes.
+    fn capture(&self, _on_captured: CaptureCallback) -> Result<()> {
+        Err(Error::Hotkey(
+            "capturing a binding is not wired up yet".to_string(),
+        ))
+    }
+
+    fn cancel_capture(&self) {}
 }
 
 impl Drop for MacHotkeys {

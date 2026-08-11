@@ -10,7 +10,8 @@ use std::sync::{Arc, Mutex};
 use crate::config::Hotkey;
 use crate::error::{Error, Result};
 use crate::ports::{
-    AudioSource, HotkeyCallback, HotkeyEvent, HotkeyListener, ModelFetcher, TextSink, Transcriber,
+    AudioSource, CaptureCallback, HotkeyCallback, HotkeyEvent, HotkeyListener, ModelFetcher,
+    TextSink, Transcriber,
 };
 
 /// Returns a canned buffer from `stop`, and records whether it is capturing.
@@ -318,6 +319,7 @@ impl TextSink for Arc<FakeSink> {
 pub struct FakeHotkeys {
     callback: Mutex<Option<HotkeyCallback>>,
     bound: Mutex<Option<Hotkey>>,
+    capturing: Mutex<Option<CaptureCallback>>,
 }
 
 impl FakeHotkeys {
@@ -337,6 +339,28 @@ impl FakeHotkeys {
     pub fn bound(&self) -> Option<Hotkey> {
         self.bound.lock().expect("bound mutex poisoned").clone()
     }
+
+    /// Simulate the user pressing the key they want to bind.
+    pub fn finish_capture(&self, hotkey: Hotkey) {
+        let captured = self
+            .capturing
+            .lock()
+            .expect("capturing mutex poisoned")
+            .take();
+        if let Some(callback) = captured {
+            callback(hotkey);
+        }
+    }
+
+    /// Whether a capture is armed. The real listener swallows keystrokes while
+    /// one is, so a test that leaves it armed is a test that would wedge the
+    /// keyboard in production.
+    pub fn is_capturing(&self) -> bool {
+        self.capturing
+            .lock()
+            .expect("capturing mutex poisoned")
+            .is_some()
+    }
 }
 
 impl HotkeyListener for FakeHotkeys {
@@ -351,6 +375,15 @@ impl HotkeyListener for FakeHotkeys {
         *self.callback.lock().expect("callback mutex poisoned") = None;
         Ok(())
     }
+
+    fn capture(&self, on_captured: CaptureCallback) -> Result<()> {
+        *self.capturing.lock().expect("capturing mutex poisoned") = Some(on_captured);
+        Ok(())
+    }
+
+    fn cancel_capture(&self) {
+        *self.capturing.lock().expect("capturing mutex poisoned") = None;
+    }
 }
 
 impl HotkeyListener for Arc<FakeHotkeys> {
@@ -360,5 +393,71 @@ impl HotkeyListener for Arc<FakeHotkeys> {
 
     fn unregister(&self) -> Result<()> {
         self.as_ref().unregister()
+    }
+
+    fn capture(&self, on_captured: CaptureCallback) -> Result<()> {
+        self.as_ref().capture(on_captured)
+    }
+
+    fn cancel_capture(&self) {
+        self.as_ref().cancel_capture();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::ModifierKey;
+
+    #[test]
+    fn a_capture_reports_the_key_that_was_pressed() {
+        let hotkeys = Arc::new(FakeHotkeys::default());
+        let captured = Arc::new(Mutex::new(None));
+
+        let sink = Arc::clone(&captured);
+        hotkeys
+            .capture(Box::new(move |hotkey| {
+                *sink.lock().expect("captured mutex poisoned") = Some(hotkey);
+            }))
+            .expect("capture arms");
+
+        let pressed = Hotkey::Modifier {
+            key: ModifierKey::LeftCommand,
+        };
+        hotkeys.finish_capture(pressed.clone());
+
+        assert_eq!(
+            *captured.lock().expect("captured mutex poisoned"),
+            Some(pressed)
+        );
+    }
+
+    /// A capture that stayed armed would go on swallowing keystrokes with
+    /// nothing on screen to explain it.
+    #[test]
+    fn a_capture_disarms_once_it_has_reported() {
+        let hotkeys = FakeHotkeys::default();
+        hotkeys.capture(Box::new(|_| {})).expect("capture arms");
+        assert!(hotkeys.is_capturing());
+
+        hotkeys.finish_capture(Hotkey::default());
+        assert!(!hotkeys.is_capturing());
+    }
+
+    #[test]
+    fn a_cancelled_capture_reports_nothing() {
+        let hotkeys = Arc::new(FakeHotkeys::default());
+        let captured = Arc::new(Mutex::new(None));
+
+        let sink = Arc::clone(&captured);
+        hotkeys
+            .capture(Box::new(move |hotkey| {
+                *sink.lock().expect("captured mutex poisoned") = Some(hotkey);
+            }))
+            .expect("capture arms");
+        hotkeys.cancel_capture();
+        hotkeys.finish_capture(Hotkey::default());
+
+        assert_eq!(*captured.lock().expect("captured mutex poisoned"), None);
     }
 }
