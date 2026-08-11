@@ -77,6 +77,22 @@ const TABLE: &[(KeyCode, u16)] = &[
     (KeyCode::Right, 0x7C),
     (KeyCode::Down, 0x7D),
     (KeyCode::Up, 0x7E),
+    (KeyCode::Equal, 0x18),
+    (KeyCode::Minus, 0x1B),
+    (KeyCode::RightBracket, 0x1E),
+    (KeyCode::LeftBracket, 0x21),
+    (KeyCode::Quote, 0x27),
+    (KeyCode::Semicolon, 0x29),
+    (KeyCode::Backslash, 0x2A),
+    (KeyCode::Comma, 0x2B),
+    (KeyCode::Slash, 0x2C),
+    (KeyCode::Period, 0x2F),
+    (KeyCode::Grave, 0x32),
+    (KeyCode::Home, 0x73),
+    (KeyCode::PageUp, 0x74),
+    (KeyCode::ForwardDelete, 0x75),
+    (KeyCode::End, 0x77),
+    (KeyCode::PageDown, 0x79),
 ];
 
 /// `None` for a key we cannot name — a media key, or a modifier, which reports

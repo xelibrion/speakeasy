@@ -137,13 +137,29 @@ pub enum KeyCode {
     Right,
     Up,
     Down,
+    Minus,
+    Equal,
+    LeftBracket,
+    RightBracket,
+    Backslash,
+    Semicolon,
+    Quote,
+    Comma,
+    Period,
+    Slash,
+    Grave,
+    Home,
+    End,
+    PageUp,
+    PageDown,
+    ForwardDelete,
 }
 
 impl KeyCode {
     /// Every variant, so the platform crate can prove its mapping table is
     /// total in both directions. A one-way table silently drops keys during
     /// capture: the user presses F13, the tap reads it, and nothing comes back.
-    pub const ALL: [Self; 65] = [
+    pub const ALL: [Self; 81] = [
         Self::A,
         Self::B,
         Self::C,
@@ -209,6 +225,22 @@ impl KeyCode {
         Self::Right,
         Self::Up,
         Self::Down,
+        Self::Minus,
+        Self::Equal,
+        Self::LeftBracket,
+        Self::RightBracket,
+        Self::Backslash,
+        Self::Semicolon,
+        Self::Quote,
+        Self::Comma,
+        Self::Period,
+        Self::Slash,
+        Self::Grave,
+        Self::Home,
+        Self::End,
+        Self::PageUp,
+        Self::PageDown,
+        Self::ForwardDelete,
     ];
 
     /// How the key is written in a binding.
@@ -279,6 +311,22 @@ impl KeyCode {
             Self::Right => "→",
             Self::Up => "↑",
             Self::Down => "↓",
+            Self::Minus => "-",
+            Self::Equal => "=",
+            Self::LeftBracket => "[",
+            Self::RightBracket => "]",
+            Self::Backslash => "\\",
+            Self::Semicolon => ";",
+            Self::Quote => "'",
+            Self::Comma => ",",
+            Self::Period => ".",
+            Self::Slash => "/",
+            Self::Grave => "`",
+            Self::Home => "Home",
+            Self::End => "End",
+            Self::PageUp => "Page Up",
+            Self::PageDown => "Page Down",
+            Self::ForwardDelete => "Forward Delete",
         }
     }
 }

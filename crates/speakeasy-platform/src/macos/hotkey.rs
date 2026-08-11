@@ -310,6 +310,19 @@ impl HotkeyListener for MacHotkeys {
                         // which key the user wants, so the bound one means
                         // nothing until it finishes.
                         if capture.armed() {
+                            // A key with no name cannot be bound, and the
+                            // recognizer stays silent rather than settling on
+                            // nothing — which from the user's side looks like
+                            // the key being ignored. Say which code it was, so
+                            // it can be added to the table.
+                            if raw.key.is_none() && matches!(event_type, CGEventType::KeyDown) {
+                                let code = event
+                                    .get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE);
+                                tracing::warn!(
+                                    keycode = code,
+                                    "this key has no name in KeyCode and cannot be bound yet"
+                                );
+                            }
                             capture.observe(raw);
                             // Swallow the keys, not the modifiers. ⌘Q must not
                             // quit the app on its way to being bound, but
