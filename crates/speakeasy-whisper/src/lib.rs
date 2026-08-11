@@ -1,5 +1,9 @@
 //! [`Transcriber`] backed by whisper.cpp through `whisper-rs`.
 
+mod segmenter;
+
+pub use segmenter::WhisperSegmenter;
+
 use std::path::Path;
 use std::sync::Mutex;
 

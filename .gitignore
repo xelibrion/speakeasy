@@ -11,3 +11,8 @@ dist
 /models
 *.bin
 *.gguf
+
+# ...but the VAD weights are vendored on purpose. They are 865 KB, they are
+# compiled into the binary with include_bytes!, and a checkout without them
+# does not build.
+!/crates/speakeasy-whisper/vendor/*.bin
