@@ -8,10 +8,6 @@
 //! One table drives both directions. Writing them separately is how a key ends
 //! up bindable but not capturable.
 
-// Nothing binds a chord yet, so the tap does not reach for this table. The
-// allow comes off with the tap rework that does.
-#![allow(dead_code)]
-
 use speakeasy_core::KeyCode;
 
 /// Every key we can bind, paired with its virtual keycode.
@@ -83,13 +79,6 @@ const TABLE: &[(KeyCode, u16)] = &[
     (KeyCode::Up, 0x7E),
 ];
 
-pub fn to_cg_keycode(key: KeyCode) -> Option<u16> {
-    TABLE
-        .iter()
-        .find(|(candidate, _)| *candidate == key)
-        .map(|(_, raw)| *raw)
-}
-
 /// `None` for a key we cannot name — a media key, or a modifier, which reports
 /// through the flags instead. Returning `None` rather than guessing is what
 /// keeps a capture from binding the wrong key.
@@ -105,9 +94,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn every_mapped_keycode_round_trips() {
+    fn every_mapped_keycode_resolves_to_its_key() {
         for (key, raw) in TABLE {
-            assert_eq!(to_cg_keycode(*key), Some(*raw));
             assert_eq!(from_cg_keycode(*raw), Some(*key), "{key:?} did not return");
         }
     }
@@ -117,8 +105,10 @@ mod tests {
     #[test]
     fn every_keycode_is_mapped() {
         for key in KeyCode::ALL {
-            let raw = to_cg_keycode(key).unwrap_or_else(|| panic!("{key:?} has no keycode"));
-            assert_eq!(from_cg_keycode(raw), Some(key));
+            assert!(
+                TABLE.iter().any(|(candidate, _)| *candidate == key),
+                "{key:?} has no keycode"
+            );
         }
     }
 

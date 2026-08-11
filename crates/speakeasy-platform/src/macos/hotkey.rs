@@ -6,9 +6,32 @@
 //! side-specific, with separate press and release.
 //!
 //! So we tap `FlagsChanged` and read IOKit's *device-dependent* modifier bits,
-//! which do encode the side. The tap is `ListenOnly`, so keystrokes are
-//! observed and never swallowed: holding Right Option still types whatever it
-//! normally types.
+//! which do encode the side. Chords need `KeyDown`/`KeyUp` as well, and the
+//! decision of whether an event satisfies the binding lives in
+//! `speakeasy_core::hotkey` — this file only translates and reacts.
+//!
+//! # Swallowing
+//!
+//! The tap is `Default` rather than `ListenOnly`, because a bound chord must
+//! not also fire in the focused app: binding `⌘⌥Space` should not open
+//! Spotlight every time you dictate.
+//!
+//! **A bare modifier is never swallowed.** The default binding is Right Option,
+//! and consuming it would break Option-based accented input (`⌥e → é`) for
+//! everyone who never changes the setting.
+//!
+//! Suppression is done by rewriting the event to [`CGEventType::Null`] in
+//! place. The obvious approach — returning `None` from the callback — does not
+//! work: `core-graphics`'s trampoline treats `None` as "pass the original
+//! through" and offers no way to return the NULL that CoreGraphics reads as
+//! "delete this event".
+//!
+//! # Cost of a `Default` tap
+//!
+//! macOS can disable one that takes too long to respond, which a `ListenOnly`
+//! tap was never subject to. `TapDisabledByTimeout` and `TapDisabledByUserInput`
+//! are delivered to the callback for exactly this, and are re-enabled there.
+//! Without that the app goes silently deaf until it is restarted.
 //!
 //! Requires Accessibility permission. Without it `CGEventTap::new` fails, which
 //! surfaces as [`Error::InputPermissionDenied`] rather than a binding that
@@ -19,14 +42,26 @@ use std::sync::mpsc::channel;
 use std::sync::{Arc, Mutex};
 
 use core_foundation::base::TCFType;
+use core_foundation::mach_port::CFMachPortRef;
 use core_foundation::runloop::{kCFRunLoopCommonModes, CFRunLoop, CFRunLoopRef};
 use core_graphics::event::{
-    CGEventTap, CGEventTapLocation, CGEventTapOptions, CGEventTapPlacement, CGEventType,
+    CGEvent, CGEventFlags, CGEventTap, CGEventTapLocation, CGEventTapOptions, CGEventTapPlacement,
+    CGEventTapProxy, CGEventType, EventField,
 };
+use speakeasy_core::hotkey::{ChordMods, RawEventKind, RawKeyEvent};
 use speakeasy_core::{
     CaptureCallback, Error, Hotkey, HotkeyCallback, HotkeyEvent, HotkeyListener, ModifierKey,
     Result,
 };
+
+use super::keycode;
+
+extern "C" {
+    /// Not exposed as a free function by `core-graphics` — only as
+    /// `CGEventTap::enable`, which needs the tap, and the callback cannot hold
+    /// the tap that owns it. The mach port is shared in instead.
+    fn CGEventTapEnable(tap: CFMachPortRef, enable: bool);
+}
 
 /// Device-dependent modifier masks from IOKit's `NX_DEVICE*` constants. These
 /// are the only way to tell left from right; `CGEventFlags`'s public constants
@@ -43,6 +78,67 @@ const fn device_mask(key: ModifierKey) -> u64 {
         ModifierKey::RightControl => 0x0000_2000,
         ModifierKey::Fn => 0x0080_0000,
     }
+}
+
+/// Every side-specific modifier currently held, read from the device-dependent
+/// bits rather than `CGEventFlags`'s public constants, which merge the sides.
+fn sides_down(flags: u64) -> Vec<ModifierKey> {
+    [
+        ModifierKey::LeftControl,
+        ModifierKey::LeftShift,
+        ModifierKey::RightShift,
+        ModifierKey::LeftCommand,
+        ModifierKey::RightCommand,
+        ModifierKey::LeftOption,
+        ModifierKey::RightOption,
+        ModifierKey::RightControl,
+        ModifierKey::Fn,
+    ]
+    .into_iter()
+    .filter(|key| flags & device_mask(*key) != 0)
+    .collect()
+}
+
+/// The side-agnostic view a chord is matched against.
+fn chord_mods(flags: CGEventFlags) -> ChordMods {
+    ChordMods {
+        command: flags.contains(CGEventFlags::CGEventFlagCommand),
+        option: flags.contains(CGEventFlags::CGEventFlagAlternate),
+        control: flags.contains(CGEventFlags::CGEventFlagControl),
+        shift: flags.contains(CGEventFlags::CGEventFlagShift),
+    }
+}
+
+/// Flatten a `CGEvent` into the shape core matches against.
+///
+/// Returning `None` means "nothing core could act on" — a key we have no name
+/// for, or an event type we did not ask for.
+fn raw_event(event_type: CGEventType, event: &CGEvent) -> Option<RawKeyEvent> {
+    let kind = match event_type {
+        CGEventType::KeyDown => RawEventKind::KeyDown,
+        CGEventType::KeyUp => RawEventKind::KeyUp,
+        CGEventType::FlagsChanged => RawEventKind::FlagsChanged,
+        _ => return None,
+    };
+
+    let flags = event.get_flags();
+    let key = match kind {
+        RawEventKind::FlagsChanged => None,
+        _ => {
+            let raw = event.get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE) as u16;
+            // An unmapped key is not a match for anything, but it must still
+            // reach the focused app — so this is `None`, not an early return
+            // that would skip the pass-through.
+            keycode::from_cg_keycode(raw)
+        }
+    };
+
+    Some(RawKeyEvent {
+        kind,
+        key,
+        mods: chord_mods(flags),
+        sides: sides_down(flags.bits()),
+    })
 }
 
 /// A run loop living on the tap's thread. `CFRunLoopStop` is safe to call from
@@ -72,27 +168,24 @@ impl MacHotkeys {
 
 impl HotkeyListener for MacHotkeys {
     fn register(&self, hotkey: &Hotkey, on_event: HotkeyCallback) -> Result<()> {
-        let key = match hotkey {
-            Hotkey::Modifier { key } => *key,
-            // Chords need KeyDown/KeyUp in the tap and the swallow path, which
-            // land with the tap rework. Failing loudly is what the port
-            // contract requires of a shape an implementation cannot bind.
-            Hotkey::Chord { mods, key } => {
-                return Err(Error::Hotkey(format!(
-                    "chord `{}{}` cannot be bound yet",
-                    mods.label(),
-                    key.label()
-                )));
-            }
-        };
-
         self.unregister()?;
 
-        let mask = device_mask(key);
+        let hotkey = hotkey.clone();
+        let label = hotkey.label();
+        // Only a chord is taken from the app underneath; see the module docs.
+        let swallows = matches!(hotkey, Hotkey::Chord { .. });
         let callback = Arc::new(on_event);
         // `CGEventTap::new` wants an `Fn`, so press state lives in an atomic
-        // rather than a captured `mut`.
+        // rather than a captured `mut`. This is also what makes `match_event`'s
+        // statelessness safe: a held key repeats, and only a transition fires.
         let is_down = Arc::new(AtomicBool::new(false));
+
+        // The callback cannot hold the tap that owns it, so the mach port is
+        // published here once the tap exists and read back when macOS disables
+        // it. A `usize` because the raw pointer is not `Send`, and only the
+        // tap's own thread ever dereferences it.
+        let port: Arc<Mutex<Option<usize>>> = Arc::new(Mutex::new(None));
+        let port_for_callback = Arc::clone(&port);
 
         // The tap must be created on the thread that runs the loop, so report
         // success or failure back to this one.
@@ -104,19 +197,52 @@ impl HotkeyListener for MacHotkeys {
                 let tap = CGEventTap::new(
                     CGEventTapLocation::HID,
                     CGEventTapPlacement::HeadInsertEventTap,
-                    // Observe only: never consume the user's keystrokes.
-                    CGEventTapOptions::ListenOnly,
-                    vec![CGEventType::FlagsChanged],
-                    move |_proxy, _event_type, event| {
-                        let down = event.get_flags().bits() & mask != 0;
-                        // FlagsChanged fires for every modifier, so only act on
-                        // an actual transition of the one we care about.
+                    // Default, not ListenOnly: a bound chord has to be taken
+                    // from the app underneath. The cost is that macOS can
+                    // disable this tap, handled below.
+                    CGEventTapOptions::Default,
+                    vec![
+                        CGEventType::FlagsChanged,
+                        CGEventType::KeyDown,
+                        CGEventType::KeyUp,
+                    ],
+                    move |_proxy: CGEventTapProxy, event_type, event: &CGEvent| {
+                        // Delivered when macOS has switched the tap off, which
+                        // it can do to a Default tap that responds too slowly.
+                        // Re-arming here is the difference between a hiccup and
+                        // an app that is deaf until restarted.
+                        if matches!(
+                            event_type,
+                            CGEventType::TapDisabledByTimeout | CGEventType::TapDisabledByUserInput
+                        ) {
+                            tracing::warn!("the event tap was disabled by macOS; re-enabling");
+                            if let Some(raw) =
+                                *port_for_callback.lock().expect("tap port mutex poisoned")
+                            {
+                                // SAFETY: the port outlives the tap's run loop,
+                                // and this runs on the tap's own thread.
+                                unsafe { CGEventTapEnable(raw as CFMachPortRef, true) };
+                            }
+                            return None;
+                        }
+
+                        // `None` here means "pass it through untouched", which
+                        // is the right answer for every key that is not bound.
+                        let raw = raw_event(event_type, event)?;
+                        let edge = speakeasy_core::hotkey::match_event(&hotkey, raw)?;
+
+                        let down = edge == HotkeyEvent::Pressed;
+                        // Only a transition is worth reporting: a held key
+                        // repeats, and FlagsChanged fires for every modifier.
                         if is_down.swap(down, Ordering::SeqCst) != down {
-                            callback(if down {
-                                HotkeyEvent::Pressed
-                            } else {
-                                HotkeyEvent::Released
-                            });
+                            callback(edge);
+                        }
+
+                        if swallows {
+                            // `None` would pass the original through — the
+                            // trampoline in core-graphics has no way to express
+                            // deletion — so neuter the event instead.
+                            event.set_type(CGEventType::Null);
                         }
                         None
                     },
@@ -145,6 +271,9 @@ impl HotkeyListener for MacHotkeys {
                     }
                 };
 
+                *port.lock().expect("tap port mutex poisoned") =
+                    Some(tap.mach_port.as_concrete_TypeRef() as usize);
+
                 let run_loop = CFRunLoop::get_current();
                 run_loop.add_source(&source, unsafe { kCFRunLoopCommonModes });
                 tap.enable();
@@ -167,7 +296,7 @@ impl HotkeyListener for MacHotkeys {
             .map_err(|_| Error::Hotkey("the hotkey thread stopped unexpectedly".to_string()))??;
 
         *self.running.lock().expect("running mutex poisoned") = Some(handle);
-        tracing::info!(hotkey = key.label(), "push-to-talk bound");
+        tracing::info!(hotkey = label, swallows, "push-to-talk bound");
         Ok(())
     }
 
