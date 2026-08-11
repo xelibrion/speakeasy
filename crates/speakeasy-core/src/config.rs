@@ -3,6 +3,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
+use crate::hotkey::{ChordMods, KeyCode};
 use crate::models::ModelId;
 
 /// Where the weights come from.
@@ -175,15 +176,63 @@ pub enum ActivationMode {
 /// a bare modifier needs a low-level event tap, while an accelerator can go
 /// through an ordinary global-shortcut registration.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "camelCase")]
+#[serde(tag = "kind", rename_all = "camelCase", from = "HotkeyRepr")]
 pub enum Hotkey {
     /// A single modifier held down. The natural shape for push-to-talk, and
-    /// the only one that can tell the left key from the right.
+    /// the only one that can tell the left key from the right. Never swallowed:
+    /// the default binding is Right Option, and consuming it would break
+    /// Option-based accented input (`⌥e → é`).
     Modifier { key: ModifierKey },
 
-    /// A conventional chord such as `"CmdOrCtrl+Alt+Space"`. Cannot express a
-    /// bare modifier, and cannot distinguish sides.
+    /// A conventional chord such as `⌘⌥Space`. Cannot distinguish sides, and
+    /// unlike a bare modifier it is swallowed while bound, so it does not also
+    /// fire in whatever app has focus.
+    Chord { mods: ChordMods, key: KeyCode },
+}
+
+/// What actually gets deserialised, so a config written by an older build still
+/// loads.
+///
+/// `Hotkey::Accelerator { accelerator: String }` was the previous second shape.
+/// It could never be registered on macOS — the listener returned
+/// `Error::Hotkey` for it — so there is nothing to preserve and it maps to the
+/// default binding. It lives here rather than on `Hotkey` so the dead shape
+/// stays out of the public API, which has to stay expressible in Swift.
+///
+/// This is not the same judgement as `Config::load`'s "malformed JSON is an
+/// error": a legacy shape is not malformed, it is old.
+#[derive(Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+enum HotkeyRepr {
+    Modifier { key: ModifierKey },
+    Chord { mods: ChordMods, key: KeyCode },
     Accelerator { accelerator: String },
+}
+
+impl From<HotkeyRepr> for Hotkey {
+    fn from(repr: HotkeyRepr) -> Self {
+        match repr {
+            HotkeyRepr::Modifier { key } => Self::Modifier { key },
+            HotkeyRepr::Chord { mods, key } => Self::Chord { mods, key },
+            HotkeyRepr::Accelerator { accelerator } => {
+                tracing::warn!(
+                    %accelerator,
+                    "this build cannot bind a string accelerator; falling back to the default"
+                );
+                Self::default()
+            }
+        }
+    }
+}
+
+impl Default for Hotkey {
+    fn default() -> Self {
+        // Right Option is a good default: it is a modifier most layouts leave
+        // free, and holding it reads naturally as push-to-talk.
+        Self::Modifier {
+            key: ModifierKey::RightOption,
+        }
+    }
 }
 
 /// A modifier key, with the side it sits on.
@@ -225,7 +274,7 @@ impl Hotkey {
     pub fn label(&self) -> String {
         match self {
             Self::Modifier { key } => key.label().to_string(),
-            Self::Accelerator { accelerator } => accelerator.clone(),
+            Self::Chord { mods, key } => format!("{}{}", mods.label(), key.label()),
         }
     }
 }
@@ -245,11 +294,7 @@ pub enum InjectionMode {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            // Right Option is a good default: it is a modifier most layouts
-            // leave free, and holding it reads naturally as push-to-talk.
-            hotkey: Hotkey::Modifier {
-                key: ModifierKey::RightOption,
-            },
+            hotkey: Hotkey::default(),
             activation: ActivationMode::Toggle,
             model: ModelChoice::default(),
             model_path: None,
@@ -317,6 +362,54 @@ mod tests {
         let config = Config::load(&path).expect("a partial config should load");
         assert_eq!(config.min_recording_ms, 400);
         assert_eq!(config.activation, Config::default().activation);
+    }
+
+    #[test]
+    fn a_chord_round_trips_through_json() {
+        let hotkey = Hotkey::Chord {
+            mods: ChordMods {
+                command: true,
+                option: true,
+                control: false,
+                shift: false,
+            },
+            key: KeyCode::Space,
+        };
+        let text = serde_json::to_string(&hotkey).expect("serialises");
+        let back: Hotkey = serde_json::from_str(&text).expect("deserialises");
+        assert_eq!(back, hotkey);
+    }
+
+    /// Written by a version that had `Hotkey::Accelerator`. It never worked on
+    /// macOS — registering it returned `Error::Hotkey` — so there is nothing to
+    /// preserve, but the config as a whole must still load rather than leaving
+    /// the user with an app that will not start.
+    #[test]
+    fn a_legacy_accelerator_config_falls_back_to_the_default_binding() {
+        let dir = TempDir::new("legacy-hotkey");
+        let path = dir.join("config.json");
+        std::fs::write(
+            &path,
+            r#"{"hotkey":{"kind":"accelerator","accelerator":"CmdOrCtrl+Alt+Space"}}"#,
+        )
+        .expect("write should succeed");
+
+        let config = Config::load(&path).expect("a legacy config should still load");
+        assert_eq!(config.hotkey, Config::default().hotkey);
+    }
+
+    #[test]
+    fn a_chord_labels_in_the_order_macos_writes_modifiers() {
+        let hotkey = Hotkey::Chord {
+            mods: ChordMods {
+                command: true,
+                option: true,
+                control: true,
+                shift: true,
+            },
+            key: KeyCode::Space,
+        };
+        assert_eq!(hotkey.label(), "⌃⌥⇧⌘Space");
     }
 
     #[test]

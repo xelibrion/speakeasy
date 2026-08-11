@@ -73,10 +73,14 @@ impl HotkeyListener for MacHotkeys {
     fn register(&self, hotkey: &Hotkey, on_event: HotkeyCallback) -> Result<()> {
         let key = match hotkey {
             Hotkey::Modifier { key } => *key,
-            Hotkey::Accelerator { accelerator } => {
+            // Chords need KeyDown/KeyUp in the tap and the swallow path, which
+            // land with the tap rework. Failing loudly is what the port
+            // contract requires of a shape an implementation cannot bind.
+            Hotkey::Chord { mods, key } => {
                 return Err(Error::Hotkey(format!(
-                    "accelerator `{accelerator}` is not supported on macOS; \
-                     Speakeasy binds a held modifier instead"
+                    "chord `{}{}` cannot be bound yet",
+                    mods.label(),
+                    key.label()
                 )));
             }
         };

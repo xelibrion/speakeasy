@@ -16,6 +16,7 @@ pub mod config;
 pub mod engine;
 pub mod error;
 pub mod event;
+pub mod hotkey;
 pub mod models;
 pub mod ports;
 
@@ -31,6 +32,7 @@ pub use config::{
 pub use engine::{Engine, HotkeyAction};
 pub use error::{Error, Result};
 pub use event::{Event, ModelStatus, State};
+pub use hotkey::{ChordMods, KeyCode};
 pub use models::{ModelId, ModelInfo};
 pub use ports::{AudioSource, HotkeyCallback, HotkeyEvent, HotkeyListener, TextSink, Transcriber};
 
