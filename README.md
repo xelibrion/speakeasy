@@ -2,7 +2,8 @@
 
 Local dictation. Tap a key and a floating widget appears while it listens; tap
 again and the transcript is injected into whatever app has focus. Transcription
-runs on-device. `Config::activation` switches the key back to hold-to-talk.
+runs on-device. The key is set in Settings › Dictation by pressing it, and
+`Config::activation` switches it back to hold-to-talk.
 
 macOS first, X11 Linux second. Wayland is explicitly out of scope.
 
@@ -69,14 +70,38 @@ non-modifier key, and the usual APIs report "Option is down" without saying
 which Option.
 
 So `MacHotkeys` taps `FlagsChanged` through CoreGraphics and reads IOKit's
-*device-dependent* modifier bits, which do encode the side. The tap is
-`ListenOnly`, so Right Option still types whatever it normally types — nothing
-is swallowed. This is why the listener lives in `platform` rather than the
-shell, and why `tauri-plugin-global-shortcut` is no longer a dependency.
+*device-dependent* modifier bits, which do encode the side. This is why the
+listener lives in `platform` rather than the shell, and why
+`tauri-plugin-global-shortcut` is no longer a dependency.
 
 `Config::hotkey` is a `Hotkey` enum, not a string: `Modifier { key }` for the
-held-modifier shape and `Accelerator { accelerator }` for a conventional chord.
-macOS implements the first and rejects the second with a clear error.
+held-modifier shape and `Chord { mods, key }` for a conventional chord such as
+`⌘⌥Space`. Chords are side-agnostic; a bare modifier is not, because the side is
+the whole point of that shape.
+
+**Set it in Settings › Dictation by pressing the key you want.** Capture runs
+through the same event tap that does the binding, so what can be captured and
+what can be bound are the same set — including Fn, which a webview never sees.
+Rebinding takes effect immediately: the core emits `HotkeyChanged` and the shell
+re-registers.
+
+### What gets swallowed
+
+A bound **chord is consumed**, so binding `⌘⌥Space` does not also open
+Spotlight every time you dictate. A bound **bare modifier never is** — the
+default binding is Right Option, and swallowing it would break `⌥e → é` for
+everyone who leaves the setting alone.
+
+Two consequences worth knowing:
+
+- The tap is `CGEventTapOptions::Default`, not `ListenOnly`. macOS can disable
+  such a tap when it responds too slowly, so the callback handles
+  `TapDisabledByTimeout`/`ByUserInput` and re-arms. Without that the app goes
+  silently deaf until restarted.
+- Suppression rewrites the event to `CGEventType::Null` in place. Returning
+  `None` from the callback does *not* consume it: `core-graphics`'s trampoline
+  reads `None` as "pass the original through" and cannot express the NULL that
+  CoreGraphics treats as deletion.
 
 **This needs Accessibility permission.** Without it `CGEventTap::new` fails and
 registration reports `Error::InputPermissionDenied` rather than binding nothing
@@ -226,10 +251,13 @@ intended approach in a `TODO`.
 - cpal capture + rubato resampling (`platform/src/audio.rs`)
 - CGEvent / pasteboard injection (`platform/src/macos/text_sink.rs`)
 - XTEST injection (`platform/src/linux/text_sink.rs`)
-- XInput2 raw-key hotkeys (`platform/src/linux/hotkey.rs`)
+- XInput2 raw-key hotkeys (`platform/src/linux/hotkey.rs`). Chords are macOS
+  only: `X11Hotkeys` returns `Error::Hotkey` for both `Hotkey::Chord` and
+  capture, as the port contract requires of a shape it cannot bind
 - whisper.cpp loading and inference (`whisper/src/lib.rs`)
-- TCC permission checks (`platform/src/macos/mod.rs`)
-- settings UI: only the Models tab is interactive. Activation mode, hotkey,
+- microphone permission status. Accessibility is checked and prompted for;
+  macOS prompts for the microphone itself when the device is opened
+- settings UI: Models and the hotkey binding are interactive. Activation mode,
   injection mode and language render read-only and can still only be changed by
   editing `config.json`
 - resuming an interrupted download from where it stopped — a `.part` file is
