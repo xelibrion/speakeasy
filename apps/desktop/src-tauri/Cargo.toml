@@ -22,5 +22,12 @@ tracing-subscriber = { workspace = true }
 # sees a file dialog.
 tauri-plugin-dialog = "2"
 
+# Metal moves the whisper encoder off the CPU. The encoder runs on a padded
+# 30-second window whatever the utterance length, so it is a fixed cost per
+# transcription — the dominant one — and worth accelerating even for dictation
+# this short. Target-specific so a Linux build never sees the feature.
+[target.'cfg(target_os = "macos")'.dependencies]
+speakeasy-whisper = { workspace = true, features = ["metal"] }
+
 [build-dependencies]
 tauri-build = { workspace = true }
