@@ -55,6 +55,7 @@ The core needs five things from the outside world (`core/src/ports.rs`):
 | `TextSink`       | `platform::{MacTextSink, X11TextSink}` | `FakeSink`  |
 | `HotkeyListener` | `platform::{MacHotkeys, X11Hotkeys}` | `FakeHotkeys` |
 | `ModelFetcher`   | `models::HttpFetcher`              | `FakeFetcher`   |
+| `SpeechSegmenter` | `whisper::WhisperSegmenter`       | `FakeSegmenter` |
 
 `speakeasy-models` exists for the same reason `speakeasy-whisper` does: to keep
 a heavy dependency — a TLS stack, here — out of the crate that is supposed to be
@@ -206,9 +207,16 @@ migrates it to a local choice and drops the old field on the next save.
 
 ## Design decisions worth knowing
 
-- **Record-then-transcribe, not streaming.** Push-to-talk records to a buffer
-  and transcribes on release. Removes VAD and endpointing entirely. Adding
-  streaming later is a new port, not a change to `Transcriber`.
+- **Record-then-transcribe, with a live preview over the top.** Push-to-talk
+  records to a buffer and transcribes on release; that final transcript is the
+  only text ever injected. While recording, a preview loop decodes what has
+  been said so far every 1.5s and shows it in the widget.
+
+  Streaming arrived as a new port, `SpeechSegmenter`, exactly as this section
+  used to predict — `Transcriber` was not touched. The detector answers "has
+  this utterance finished?", which is what lets preview text be committed and
+  then never revised; only the sentence in progress can still change. See
+  `core::preview` for the rule and `docs/superpowers/specs/` for why.
 - **Paste injection by default.** More reliable than synthetic key events in
   Electron apps and terminals, at the cost of clobbering the clipboard.
   Switchable via `Config::injection_mode`.
@@ -233,9 +241,20 @@ make check   # fmt, clippy -D warnings, tests, boundary check
 make dev     # run the app
 ```
 
+On macOS the desktop app enables `speakeasy-whisper`'s `metal` feature, and it
+is not optional in practice. Measured on an M2 with `base.en`, a decode takes
+~1.90s on the CPU and ~0.31s on the GPU. The encoder runs on a padded
+30-second window whatever the utterance length, so that cost is fixed per
+decode rather than proportional to how much was said — which is why the live
+preview is affordable at all, and why it would not be without Metal.
+
+The voice detector deliberately runs on the CPU. Its graph contains an op the
+Metal backend cannot execute, and whisper.cpp aborts the process rather than
+falling back.
+
 Verified against rustc 1.97.1: the workspace builds and links, `make check`
 passes, and the frontend typechecks and bundles. Resolved versions are in
-`Cargo.lock` — tauri 2.11.5, whisper-rs 0.14.4, cpal 0.15.3, rubato 0.15.0,
+`Cargo.lock` — tauri 2.11.5, whisper-rs 0.16.0, cpal 0.15.3, rubato 0.15.0,
 x11rb 0.13.2.
 
 Push-to-talk is verified end to end on macOS: a synthesised Right Option press

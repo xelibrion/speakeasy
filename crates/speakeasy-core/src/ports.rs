@@ -1,4 +1,4 @@
-//! The four capabilities the core needs from the outside world.
+//! The capabilities the core needs from the outside world.
 //!
 //! Implementations live in `speakeasy-platform` (OS APIs), `speakeasy-whisper`
 //! (inference), and [`crate::fakes`] (tests). The core knows only these traits,
