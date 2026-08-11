@@ -1,4 +1,5 @@
 mod hotkey;
+mod keycode;
 mod text_sink;
 
 use std::ffi::{c_void, CString};
