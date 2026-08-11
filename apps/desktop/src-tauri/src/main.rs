@@ -15,7 +15,7 @@ mod widget;
 
 use speakeasy_core::{Config, Engine};
 use speakeasy_platform::CpalAudioSource;
-use speakeasy_whisper::WhisperTranscriber;
+use speakeasy_whisper::{WhisperSegmenter, WhisperTranscriber};
 
 /// Config file location. Under the OS config directory rather than next to the
 /// binary, so it survives reinstalling the app.
@@ -77,15 +77,27 @@ fn main() {
     let transcriber = std::sync::Arc::new(WhisperTranscriber::unloaded());
     let sink = speakeasy_platform::text_sink(&config);
 
+    let models = models_dir(&settings);
     let engine = Engine::new(
         Box::new(audio),
         transcriber,
         sink,
         Box::new(speakeasy_models::HttpFetcher::new()),
-        models_dir(&settings),
+        models.clone(),
         config.clone(),
     )
     .persisting_to(settings);
+
+    // A detector that will not load costs the user their live preview, not
+    // their dictation — so this warns and carries on rather than failing to
+    // start.
+    let engine = match WhisperSegmenter::new(&models) {
+        Ok(segmenter) => engine.with_segmenter(std::sync::Arc::new(segmenter)),
+        Err(err) => {
+            tracing::warn!(%err, "previews are off: the voice detector would not load");
+            engine
+        }
+    };
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
