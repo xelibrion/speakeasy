@@ -34,7 +34,7 @@ rubato = "0.15"
 # Already in the tree via rubato; named here because the spectrum display uses
 # it directly rather than by accident.
 realfft = "3"
-whisper-rs = "0.14"
+whisper-rs = "0.16"
 # Model downloads. Blocking by design — the ModelFetcher port's contract is
 # blocking, so an async runtime would be a dependency with nothing to do.
 ureq = "3"

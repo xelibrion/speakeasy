@@ -86,18 +86,19 @@ impl Transcriber for WhisperTranscriber {
             .full(params, samples)
             .map_err(|err| Error::Transcription(format!("inference failed: {err}")))?;
 
-        let segments = state
-            .full_n_segments()
-            .map_err(|err| Error::Transcription(format!("could not count segments: {err}")))?;
+        let segments = state.full_n_segments();
 
         let mut text = String::new();
         for i in 0..segments {
+            let segment = state
+                .get_segment(i)
+                .ok_or_else(|| Error::Transcription(format!("segment {i} vanished")))?;
             // `_lossy` so a stray byte in one segment cannot fail the whole
             // utterance — dropping a character beats dropping the dictation.
-            let segment = state.full_get_segment_text_lossy(i).map_err(|err| {
+            let piece = segment.to_str_lossy().map_err(|err| {
                 Error::Transcription(format!("could not read segment {i}: {err}"))
             })?;
-            text.push_str(&segment);
+            text.push_str(&piece);
         }
 
         tracing::debug!(
