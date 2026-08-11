@@ -10,6 +10,9 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::config::{Hotkey, ModifierKey};
+use crate::ports::HotkeyEvent;
+
 /// The modifiers a chord requires, side-agnostic.
 ///
 /// `⌘⌥Space` should not care which Command key was used. A bare modifier
@@ -277,5 +280,200 @@ impl KeyCode {
             Self::Up => "↑",
             Self::Down => "↓",
         }
+    }
+}
+
+/// What a platform event tap saw, flattened.
+///
+/// Deliberately not a `CGEvent`: this crate must not learn about CoreGraphics,
+/// and a flat description is what makes the matching below testable anywhere.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RawKeyEvent {
+    pub kind: RawEventKind,
+
+    /// The non-modifier key involved, when there is one. `None` for a flags
+    /// change, which is how a bare modifier reports.
+    pub key: Option<KeyCode>,
+
+    /// Side-agnostic modifier state at the moment of the event.
+    pub mods: ChordMods,
+
+    /// Which side-specific modifiers are currently held.
+    ///
+    /// Separate from `mods` because only this can answer a
+    /// [`Hotkey::Modifier`] binding, and only `mods` can answer a chord.
+    pub sides: Vec<ModifierKey>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RawEventKind {
+    KeyDown,
+    KeyUp,
+    FlagsChanged,
+}
+
+impl RawKeyEvent {
+    pub fn key_down(key: KeyCode, mods: ChordMods) -> Self {
+        Self {
+            kind: RawEventKind::KeyDown,
+            key: Some(key),
+            mods,
+            sides: Vec::new(),
+        }
+    }
+
+    pub fn key_up(key: KeyCode, mods: ChordMods) -> Self {
+        Self {
+            kind: RawEventKind::KeyUp,
+            key: Some(key),
+            mods,
+            sides: Vec::new(),
+        }
+    }
+
+    pub fn flags_changed(mods: ChordMods) -> Self {
+        Self {
+            kind: RawEventKind::FlagsChanged,
+            key: None,
+            mods,
+            sides: Vec::new(),
+        }
+    }
+
+    /// A flags change carrying the side-specific modifiers currently down.
+    pub fn modifier_changed(sides: &[ModifierKey]) -> Self {
+        Self {
+            kind: RawEventKind::FlagsChanged,
+            key: None,
+            mods: ChordMods::default(),
+            sides: sides.to_vec(),
+        }
+    }
+}
+
+/// Does this event start or end the binding?
+///
+/// Stateless on purpose. It answers "this event satisfies the binding" and
+/// nothing about what came before, so a held key that auto-repeats yields
+/// `Pressed` every time. **Suppressing repeats is the caller's job** — the
+/// macOS tap already holds an `AtomicBool` and acts only on a transition, and
+/// that is where the edge detection belongs, next to the thing that has a
+/// lifetime.
+pub fn match_event(hotkey: &Hotkey, event: RawKeyEvent) -> Option<HotkeyEvent> {
+    match hotkey {
+        Hotkey::Modifier { key } => match_modifier(*key, &event),
+        Hotkey::Chord { mods, key } => match_chord(*mods, *key, &event),
+    }
+}
+
+/// A bare modifier is held or it is not; the side is the whole point, so this
+/// reads `sides` and ignores the side-agnostic set entirely.
+fn match_modifier(key: ModifierKey, event: &RawKeyEvent) -> Option<HotkeyEvent> {
+    if event.kind != RawEventKind::FlagsChanged {
+        return None;
+    }
+    Some(if event.sides.contains(&key) {
+        HotkeyEvent::Pressed
+    } else {
+        HotkeyEvent::Released
+    })
+}
+
+fn match_chord(mods: ChordMods, key: KeyCode, event: &RawKeyEvent) -> Option<HotkeyEvent> {
+    match event.kind {
+        // Exact match, not a subset: `⌘⌥Space` firing on `⌘⇧⌥Space` would make
+        // the binding collide with every chord that merely contains it.
+        RawEventKind::KeyDown if event.key == Some(key) && event.mods == mods => {
+            Some(HotkeyEvent::Pressed)
+        }
+        RawEventKind::KeyUp if event.key == Some(key) => Some(HotkeyEvent::Released),
+
+        // A modifier lifting while the key is still down ends the hold. Without
+        // this, push-to-talk waits for a key-up it will never see, because the
+        // user's hand leaves the modifier first.
+        RawEventKind::FlagsChanged if event.mods != mods => Some(HotkeyEvent::Released),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn chord() -> Hotkey {
+        Hotkey::Chord {
+            mods: ChordMods {
+                command: true,
+                option: true,
+                ..Default::default()
+            },
+            key: KeyCode::Space,
+        }
+    }
+
+    fn modifier() -> Hotkey {
+        Hotkey::Modifier {
+            key: ModifierKey::RightOption,
+        }
+    }
+
+    fn mods(command: bool, option: bool, shift: bool) -> ChordMods {
+        ChordMods {
+            command,
+            option,
+            shift,
+            control: false,
+        }
+    }
+
+    #[test]
+    fn a_chord_fires_when_the_key_goes_down_with_exactly_its_modifiers() {
+        let event = RawKeyEvent::key_down(KeyCode::Space, mods(true, true, false));
+        assert_eq!(match_event(&chord(), event), Some(HotkeyEvent::Pressed));
+    }
+
+    #[test]
+    fn a_chord_does_not_fire_when_an_extra_modifier_is_held() {
+        let event = RawKeyEvent::key_down(KeyCode::Space, mods(true, true, true));
+        assert_eq!(match_event(&chord(), event), None);
+    }
+
+    #[test]
+    fn a_chord_does_not_fire_when_a_required_modifier_is_missing() {
+        let event = RawKeyEvent::key_down(KeyCode::Space, mods(true, false, false));
+        assert_eq!(match_event(&chord(), event), None);
+    }
+
+    #[test]
+    fn a_chord_releases_when_its_key_lifts() {
+        let event = RawKeyEvent::key_up(KeyCode::Space, mods(true, true, false));
+        assert_eq!(match_event(&chord(), event), Some(HotkeyEvent::Released));
+    }
+
+    #[test]
+    fn a_chord_releases_when_a_required_modifier_lifts_before_the_key() {
+        let event = RawKeyEvent::flags_changed(mods(false, true, false));
+        assert_eq!(match_event(&chord(), event), Some(HotkeyEvent::Released));
+    }
+
+    #[test]
+    fn an_unrelated_key_is_ignored() {
+        let event = RawKeyEvent::key_down(KeyCode::A, mods(true, true, false));
+        assert_eq!(match_event(&chord(), event), None);
+    }
+
+    #[test]
+    fn a_modifier_binding_ignores_ordinary_keys() {
+        let event = RawKeyEvent::key_down(KeyCode::Space, ChordMods::default());
+        assert_eq!(match_event(&modifier(), event), None);
+    }
+
+    #[test]
+    fn a_modifier_binding_fires_on_its_own_side_only() {
+        let down = RawKeyEvent::modifier_changed(&[ModifierKey::RightOption]);
+        assert_eq!(match_event(&modifier(), down), Some(HotkeyEvent::Pressed));
+
+        let other = RawKeyEvent::modifier_changed(&[ModifierKey::LeftOption]);
+        assert_eq!(match_event(&modifier(), other), Some(HotkeyEvent::Released));
     }
 }
