@@ -23,10 +23,21 @@ body {
 
 /* --- settings ------------------------------------------------------- */
 
+/* Two columns, with the banner spanning both. A missing Accessibility grant is
+   the likeliest reason a fresh install does nothing at all, so it must not end
+   up narrower than the pane it is warning about — or worse, behind a tab. */
 .settings {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: start;
+  gap: 0 20px;
   padding: 16px 20px 24px;
   font-size: 13px;
   line-height: 1.6;
+}
+
+.settings > .banner {
+  grid-column: 1 / -1;
 }
 
 .settings button {
@@ -66,25 +77,50 @@ body {
 
 .tabs {
   display: flex;
-  gap: 4px;
-  border-bottom: 1px solid color-mix(in srgb, var(--fg) 12%, transparent);
+  flex-direction: column;
+  gap: 2px;
+  min-width: 108px;
+  border-right: 1px solid color-mix(in srgb, var(--fg) 12%, transparent);
+  padding-right: 12px;
 }
 
 .settings .tab {
-  padding: 6px 12px;
-  border-radius: 6px 6px 0 0;
+  padding: 6px 10px;
+  border-radius: 6px;
   background: transparent;
   color: var(--muted);
   font-size: 13px;
+  text-align: left;
 }
 
 .settings .tab[aria-selected="true"] {
   color: var(--fg);
-  box-shadow: inset 0 -2px 0 var(--accent);
+  background: color-mix(in srgb, var(--fg) 6%, transparent);
+  box-shadow: inset 2px 0 0 var(--accent);
 }
 
 .panel {
-  padding-top: 16px;
+  min-width: 0;
+}
+
+/* --- dictation ------------------------------------------------------- */
+
+/* This row has three children rather than two, and `space-between` would leave
+   the value marooned in the middle. Pinning the label keeps the value beside
+   the button it belongs to. */
+.setting-block .setting .setting-label {
+  margin-right: auto;
+}
+
+.setting-block .setting {
+  align-items: center;
+  gap: 12px;
+}
+
+.setting-error:not(:empty) {
+  padding-bottom: 4px;
+  color: var(--danger);
+  font-size: 12px;
 }
 
 /* --- models ---------------------------------------------------------- */

@@ -12,8 +12,10 @@
 import { open } from "@tauri-apps/plugin-dialog";
 
 import {
-  activationLabel,
+  cancelHotkeyCapture,
   cancelModelDownload,
+  captureHotkey,
+  hotkeyLabel,
   errorLabel,
   formatBytes,
   getConfig,
@@ -28,6 +30,7 @@ import {
   removeModel,
   selectModel,
   type Config,
+  type Hotkey,
   type ModelId,
   type ModelInfo,
   type ModelStatus,
@@ -120,19 +123,91 @@ async function renderPermissions(banner: HTMLElement): Promise<void> {
   banner.append(text, button);
 }
 
-/** Read-only for now; the settings themselves are not editable yet. */
 async function mountDictation(panel: HTMLElement): Promise<void> {
   const config = await getConfig();
 
   panel.append(
-    row("Hotkey", activationLabel(config)),
+    await hotkeyRow(config),
     row("Insertion", config.injectionMode === "paste" ? "Paste" : "Type each character"),
     row("Language", config.language ?? "Auto-detect"),
   );
 
   const note = element("p", "note");
-  note.textContent = "These are not editable yet. Edit config.json to change them.";
+  note.textContent = "Insertion and language are not editable yet. Edit config.json to change them.";
   panel.append(note);
+}
+
+/**
+ * The binding, and a button that reads the next key pressed.
+ *
+ * No validity check here on purpose: whether a key can be bound is the
+ * platform's answer, and a second opinion in the webview is exactly the kind of
+ * drift this codebase is arranged to avoid. The pane renders what comes back.
+ */
+async function hotkeyRow(config: Config): Promise<HTMLElement> {
+  const wrapper = element("div", "setting-block");
+  const line = element("div", "setting");
+  const name = element("span", "setting-label");
+  name.textContent = "Hotkey";
+  const value = element("span", "setting-value");
+  const action = document.createElement("button");
+  line.append(name, value, action);
+
+  const problem = element("div", "setting-error");
+  wrapper.append(line, problem);
+
+  let listening = false;
+
+  const draw = (hotkey: Hotkey) => {
+    value.textContent = listening ? "Press a key…" : hotkeyLabel(hotkey);
+    action.textContent = listening ? "Cancel" : "Change";
+  };
+
+  let current = config.hotkey;
+  draw(current);
+
+  action.addEventListener("click", () => {
+    void (async () => {
+      problem.textContent = "";
+      if (listening) {
+        await cancelHotkeyCapture();
+        listening = false;
+        draw(current);
+        return;
+      }
+
+      listening = true;
+      draw(current);
+      try {
+        await captureHotkey();
+      } catch (err) {
+        // The likeliest cause is a missing Accessibility grant, which the
+        // banner above already explains how to fix.
+        listening = false;
+        draw(current);
+        problem.textContent = String(err);
+      }
+    })();
+  });
+
+  // The capture reports through the ordinary rebinding event, so this is also
+  // what keeps the row honest if the binding changes from anywhere else.
+  const unlisten = await onEngineEvent((event) => {
+    if (event.type !== "hotkeyChanged") return;
+    listening = false;
+    current = event.hotkey;
+    draw(current);
+  });
+
+  // A capture swallows keystrokes. Leaving one armed behind a tab the user has
+  // navigated away from would half-deaden the keyboard with nothing on screen
+  // to explain it.
+  releasePanel = () => {
+    unlisten();
+    if (listening) void cancelHotkeyCapture();
+  };
+
+  return wrapper;
 }
 
 async function mountModels(panel: HTMLElement): Promise<void> {
