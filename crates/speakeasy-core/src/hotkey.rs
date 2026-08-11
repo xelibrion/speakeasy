@@ -427,6 +427,75 @@ mod tests {
     }
 
     #[test]
+    fn capturing_a_bare_modifier_waits_for_it_to_be_let_go() {
+        let mut recognizer = CaptureRecognizer::new();
+
+        // Held: nothing is settled yet, because this could still become a chord.
+        let down = RawKeyEvent::modifier_changed(&[ModifierKey::RightOption]);
+        assert_eq!(recognizer.observe(down), None);
+
+        let up = RawKeyEvent::modifier_changed(&[]);
+        assert_eq!(
+            recognizer.observe(up),
+            Some(Hotkey::Modifier {
+                key: ModifierKey::RightOption
+            })
+        );
+    }
+
+    /// The case that makes the delay necessary: binding the first modifier of a
+    /// chord would make chords impossible to enter at all.
+    #[test]
+    fn capturing_a_chord_is_not_derailed_by_its_modifiers_arriving_first() {
+        let mut recognizer = CaptureRecognizer::new();
+
+        assert_eq!(
+            recognizer.observe(RawKeyEvent::modifier_changed(&[ModifierKey::LeftCommand])),
+            None
+        );
+        assert_eq!(
+            recognizer.observe(RawKeyEvent::modifier_changed(&[
+                ModifierKey::LeftCommand,
+                ModifierKey::LeftOption
+            ])),
+            None
+        );
+
+        let pressed = RawKeyEvent::key_down(KeyCode::Space, mods(true, true, false));
+        assert_eq!(
+            recognizer.observe(pressed),
+            Some(Hotkey::Chord {
+                mods: mods(true, true, false),
+                key: KeyCode::Space,
+            })
+        );
+    }
+
+    #[test]
+    fn letting_go_of_two_modifiers_captures_nothing() {
+        let mut recognizer = CaptureRecognizer::new();
+        recognizer.observe(RawKeyEvent::modifier_changed(&[
+            ModifierKey::LeftCommand,
+            ModifierKey::LeftOption,
+        ]));
+        assert_eq!(recognizer.observe(RawKeyEvent::modifier_changed(&[])), None);
+    }
+
+    /// A key with no name cannot be bound, so the gesture stays open rather
+    /// than settling on nothing and disarming the capture.
+    #[test]
+    fn an_unmappable_key_does_not_settle_the_capture() {
+        let mut recognizer = CaptureRecognizer::new();
+        let event = RawKeyEvent {
+            kind: RawEventKind::KeyDown,
+            key: None,
+            mods: ChordMods::default(),
+            sides: Vec::new(),
+        };
+        assert_eq!(recognizer.observe(event), None);
+    }
+
+    #[test]
     fn a_chord_fires_when_the_key_goes_down_with_exactly_its_modifiers() {
         let event = RawKeyEvent::key_down(KeyCode::Space, mods(true, true, false));
         assert_eq!(match_event(&chord(), event), Some(HotkeyEvent::Pressed));
@@ -475,5 +544,58 @@ mod tests {
 
         let other = RawKeyEvent::modifier_changed(&[ModifierKey::LeftOption]);
         assert_eq!(match_event(&modifier(), other), Some(HotkeyEvent::Released));
+    }
+}
+
+/// Turns a stream of raw events into the one binding the user meant.
+///
+/// Needed because a chord arrives one key at a time. Pressing `⌘⌥Space` starts
+/// with `⌘` going down, and binding `Left Command` there — the first thing the
+/// tap sees — would make chords impossible to enter.
+///
+/// So the rule is: a key going down settles it immediately as a chord, while a
+/// bare modifier is only settled once every modifier has been let go, and only
+/// if exactly one was held. That way `⌘` on the way to a chord is indistinct
+/// from noise, and `⌥` pressed and released on its own is unambiguous.
+#[derive(Debug, Default)]
+pub struct CaptureRecognizer {
+    /// The modifiers held during the current gesture, if it is still only
+    /// modifiers.
+    held: Vec<ModifierKey>,
+}
+
+impl CaptureRecognizer {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// `Some` once the gesture is unambiguous. The caller then disarms.
+    pub fn observe(&mut self, event: RawKeyEvent) -> Option<Hotkey> {
+        match event.kind {
+            RawEventKind::KeyDown => {
+                // An unmapped key — a media key, say — is not bindable, so the
+                // gesture is left open rather than settled on nothing.
+                let key = event.key?;
+                Some(Hotkey::Chord {
+                    mods: event.mods,
+                    key,
+                })
+            }
+            RawEventKind::FlagsChanged => {
+                if event.sides.is_empty() {
+                    // Everything let go. One modifier held throughout is a
+                    // binding; two or more is an abandoned chord.
+                    let held = std::mem::take(&mut self.held);
+                    match held.as_slice() {
+                        [key] => Some(Hotkey::Modifier { key: *key }),
+                        _ => None,
+                    }
+                } else {
+                    self.held = event.sides;
+                    None
+                }
+            }
+            RawEventKind::KeyUp => None,
+        }
     }
 }

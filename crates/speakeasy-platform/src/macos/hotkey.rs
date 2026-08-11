@@ -37,9 +37,13 @@
 //! surfaces as [`Error::InputPermissionDenied`] rather than a binding that
 //! silently never fires.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::channel;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+/// How long a capture waits before giving the keyboard back.
+const CAPTURE_TIMEOUT: Duration = Duration::from_secs(10);
 
 use core_foundation::base::TCFType;
 use core_foundation::mach_port::CFMachPortRef;
@@ -48,7 +52,7 @@ use core_graphics::event::{
     CGEvent, CGEventFlags, CGEventTap, CGEventTapLocation, CGEventTapOptions, CGEventTapPlacement,
     CGEventTapProxy, CGEventType, EventField,
 };
-use speakeasy_core::hotkey::{ChordMods, RawEventKind, RawKeyEvent};
+use speakeasy_core::hotkey::{CaptureRecognizer, ChordMods, RawEventKind, RawKeyEvent};
 use speakeasy_core::{
     CaptureCallback, Error, Hotkey, HotkeyCallback, HotkeyEvent, HotkeyListener, ModifierKey,
     Result,
@@ -155,9 +159,55 @@ impl RunLoopHandle {
     }
 }
 
+/// A capture in flight, shared between the caller that arms it and the tap
+/// callback that feeds it.
+#[derive(Default)]
+struct Capture {
+    callback: Mutex<Option<CaptureCallback>>,
+    recognizer: Mutex<CaptureRecognizer>,
+    /// Bumped on every arm, so a timeout only cancels the capture it was
+    /// started for and not whichever one happens to be running ten seconds
+    /// later.
+    generation: AtomicU64,
+}
+
+impl Capture {
+    fn armed(&self) -> bool {
+        self.callback
+            .lock()
+            .expect("capture callback mutex poisoned")
+            .is_some()
+    }
+
+    fn disarm(&self) -> Option<CaptureCallback> {
+        *self.recognizer.lock().expect("recognizer mutex poisoned") = CaptureRecognizer::new();
+        self.callback
+            .lock()
+            .expect("capture callback mutex poisoned")
+            .take()
+    }
+
+    /// Feed an event; report and disarm once the gesture is unambiguous.
+    fn observe(&self, event: RawKeyEvent) {
+        let settled = self
+            .recognizer
+            .lock()
+            .expect("recognizer mutex poisoned")
+            .observe(event);
+        let Some(hotkey) = settled else { return };
+
+        // Taken before calling out, so a callback that arms another capture
+        // does not immediately have it cleared by this one.
+        if let Some(callback) = self.disarm() {
+            callback(hotkey);
+        }
+    }
+}
+
 #[derive(Default)]
 pub struct MacHotkeys {
     running: Mutex<Option<RunLoopHandle>>,
+    capture: Arc<Capture>,
 }
 
 impl MacHotkeys {
@@ -186,6 +236,7 @@ impl HotkeyListener for MacHotkeys {
         // tap's own thread ever dereferences it.
         let port: Arc<Mutex<Option<usize>>> = Arc::new(Mutex::new(None));
         let port_for_callback = Arc::clone(&port);
+        let capture = Arc::clone(&self.capture);
 
         // The tap must be created on the thread that runs the loop, so report
         // success or failure back to this one.
@@ -229,6 +280,22 @@ impl HotkeyListener for MacHotkeys {
                         // `None` here means "pass it through untouched", which
                         // is the right answer for every key that is not bound.
                         let raw = raw_event(event_type, event)?;
+
+                        // A capture in flight owns the keyboard: it is asking
+                        // which key the user wants, so the bound one means
+                        // nothing until it finishes.
+                        if capture.armed() {
+                            capture.observe(raw);
+                            // Swallow the keys, not the modifiers. ⌘Q must not
+                            // quit the app on its way to being bound, but
+                            // eating FlagsChanged would desynchronise the
+                            // system's idea of which modifiers are down.
+                            if matches!(event_type, CGEventType::KeyDown | CGEventType::KeyUp) {
+                                event.set_type(CGEventType::Null);
+                            }
+                            return None;
+                        }
+
                         let edge = speakeasy_core::hotkey::match_event(&hotkey, raw)?;
 
                         let down = edge == HotkeyEvent::Pressed;
@@ -307,15 +374,62 @@ impl HotkeyListener for MacHotkeys {
         Ok(())
     }
 
-    /// Capture arrives with the tap rework; until then, fail rather than leave
-    /// the settings window waiting on a report that never comes.
-    fn capture(&self, _on_captured: CaptureCallback) -> Result<()> {
-        Err(Error::Hotkey(
-            "capturing a binding is not wired up yet".to_string(),
-        ))
+    /// Capture rides on the tap that `register` installed rather than creating
+    /// one of its own, so what can be captured and what can be bound are the
+    /// same set by construction.
+    ///
+    /// The consequence is that there must be a tap: with no binding registered
+    /// — which on a fresh install means Accessibility was refused — there is
+    /// nothing listening, and saying so beats reporting nothing forever.
+    fn capture(&self, on_captured: CaptureCallback) -> Result<()> {
+        if self
+            .running
+            .lock()
+            .expect("running mutex poisoned")
+            .is_none()
+        {
+            return Err(Error::InputPermissionDenied(
+                "no event tap is running, so no key can be read; grant Speakeasy \
+                 Accessibility access in System Settings › Privacy & Security › \
+                 Accessibility"
+                    .to_string(),
+            ));
+        }
+
+        *self
+            .capture
+            .recognizer
+            .lock()
+            .expect("recognizer mutex poisoned") = CaptureRecognizer::new();
+        *self
+            .capture
+            .callback
+            .lock()
+            .expect("capture callback mutex poisoned") = Some(on_captured);
+
+        let generation = self.capture.generation.fetch_add(1, Ordering::SeqCst) + 1;
+
+        // A capture swallows keystrokes, so one that outlives the window that
+        // started it would leave the keyboard half-dead with nothing on screen
+        // to explain why. The window cancels on unmount; this is the backstop
+        // for the ways it might not get to.
+        let capture = Arc::clone(&self.capture);
+        std::thread::spawn(move || {
+            std::thread::sleep(CAPTURE_TIMEOUT);
+            if capture.generation.load(Ordering::SeqCst) == generation && capture.armed() {
+                tracing::warn!("no key was pressed; capture timed out");
+                capture.disarm();
+            }
+        });
+
+        Ok(())
     }
 
-    fn cancel_capture(&self) {}
+    fn cancel_capture(&self) {
+        // Bumped so the timeout thread for this capture becomes a no-op.
+        self.capture.generation.fetch_add(1, Ordering::SeqCst);
+        self.capture.disarm();
+    }
 }
 
 impl Drop for MacHotkeys {
