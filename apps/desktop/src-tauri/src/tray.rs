@@ -21,6 +21,10 @@ use tauri::{AppHandle, Manager};
 /// The status line, kept so the bridge can rewrite its text.
 static STATUS_ITEM: Mutex<Option<MenuItem<tauri::Wry>>> = Mutex::new(None);
 
+/// Kept for the same reason: their text and enabled state follow the engine.
+static SPEAK_ITEM: Mutex<Option<MenuItem<tauri::Wry>>> = Mutex::new(None);
+static CANCEL_ITEM: Mutex<Option<MenuItem<tauri::Wry>>> = Mutex::new(None);
+
 /// The two things the status line reports on.
 ///
 /// Both are kept because either can change without the other, and the line has
@@ -36,6 +40,10 @@ pub fn attach(app: &AppHandle, engine: &Engine) -> Result<(), Box<dyn std::error
     *MODEL_STATUS.lock().expect("model status mutex poisoned") = Some(engine.model_status());
 
     let status = MenuItem::with_id(app, "status", status_text(), false, None::<&str>)?;
+    // Both exist from the start because a menu cannot be reordered afterwards;
+    // what changes is their text and whether they are enabled.
+    let speak = MenuItem::with_id(app, "speak", speak_text(), true, None::<&str>)?;
+    let cancel = MenuItem::with_id(app, "cancel", "Cancel", false, None::<&str>)?;
     let settings = MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit Speakeasy", true, Some("CmdOrCtrl+Q"))?;
 
@@ -43,6 +51,9 @@ pub fn attach(app: &AppHandle, engine: &Engine) -> Result<(), Box<dyn std::error
         app,
         &[
             &status,
+            &PredefinedMenuItem::separator(app)?,
+            &speak,
+            &cancel,
             &PredefinedMenuItem::separator(app)?,
             &settings,
             &PredefinedMenuItem::separator(app)?,
@@ -59,14 +70,37 @@ pub fn attach(app: &AppHandle, engine: &Engine) -> Result<(), Box<dyn std::error
     tray.set_show_menu_on_left_click(true)?;
 
     *STATUS_ITEM.lock().expect("status item mutex poisoned") = Some(status);
+    *SPEAK_ITEM.lock().expect("speak item mutex poisoned") = Some(speak);
+    *CANCEL_ITEM.lock().expect("cancel item mutex poisoned") = Some(cancel);
 
-    app.on_menu_event(|app, event| match event.id().as_ref() {
+    let engine = engine.clone();
+    app.on_menu_event(move |app, event| match event.id().as_ref() {
+        "speak" => toggle_recording(&engine),
+        "cancel" => engine.cancel(),
         "settings" => show_settings(app),
         "quit" => app.exit(0),
         _ => {}
     });
 
     Ok(())
+}
+
+/// The tray's reason for existing: dictation you can start when the hotkey is
+/// the thing that is broken.
+fn toggle_recording(engine: &Engine) {
+    if matches!(engine.state(), State::Recording) {
+        // Transcription blocks, and this handler runs on the main thread —
+        // where blocking freezes the menu bar, the widget and every window.
+        // `hotkey.rs` spawns for the same reason.
+        let engine = engine.clone();
+        std::thread::spawn(move || {
+            if let Err(err) = engine.finish_recording() {
+                tracing::warn!(%err, "recording did not complete");
+            }
+        });
+    } else if let Err(err) = engine.begin_recording() {
+        tracing::warn!(%err, "could not start recording");
+    }
 }
 
 /// Rewrite the status line after an engine transition.
@@ -92,6 +126,49 @@ fn render() {
         if let Err(err) = item.set_text(status_text()) {
             tracing::warn!(%err, "could not update tray status");
         }
+    }
+
+    let recording = matches!(
+        LAST_STATE
+            .lock()
+            .expect("last state mutex poisoned")
+            .as_ref(),
+        Some(State::Recording)
+    );
+
+    if let Some(item) = SPEAK_ITEM
+        .lock()
+        .expect("speak item mutex poisoned")
+        .as_ref()
+    {
+        if let Err(err) = item.set_text(speak_text()) {
+            tracing::warn!(%err, "could not update the speak item");
+        }
+    }
+
+    // Only while there is something to discard: an always-present Cancel
+    // invites the question of what it would cancel.
+    if let Some(item) = CANCEL_ITEM
+        .lock()
+        .expect("cancel item mutex poisoned")
+        .as_ref()
+    {
+        if let Err(err) = item.set_enabled(recording) {
+            tracing::warn!(%err, "could not update the cancel item");
+        }
+    }
+}
+
+/// One item for both directions, so the menu has a single dictation control
+/// rather than two that are mutually exclusive.
+fn speak_text() -> String {
+    match LAST_STATE
+        .lock()
+        .expect("last state mutex poisoned")
+        .as_ref()
+    {
+        Some(State::Recording) => "Stop and insert".to_string(),
+        _ => "Speak".to_string(),
     }
 }
 
