@@ -105,6 +105,14 @@ fn main() {
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
 
+            // Before anything tries to use the grant. Asking is what registers
+            // the app in the Accessibility list, so without this the settings
+            // pane the banner sends people to has no Speakeasy row to switch
+            // on — which reads as the app being broken rather than unpermitted.
+            if !speakeasy_platform::request_permissions() {
+                tracing::warn!("Accessibility has not been granted; the hotkey will not bind");
+            }
+
             // Core events → webview events. The only place the two worlds meet.
             bridge::forward_events(app.handle().clone(), engine.clone());
             tray::attach(app.handle(), &engine)?;

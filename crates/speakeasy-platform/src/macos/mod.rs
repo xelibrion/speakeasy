@@ -4,6 +4,10 @@ mod text_sink;
 
 use std::ffi::{c_void, CString};
 
+use core_foundation::base::TCFType;
+use core_foundation::boolean::CFBoolean;
+use core_foundation::dictionary::{CFDictionary, CFDictionaryRef};
+use core_foundation::string::{CFString, CFStringRef};
 use speakeasy_core::config::InjectionMode;
 use speakeasy_core::{HotkeyListener, TextSink};
 
@@ -148,17 +152,48 @@ pub fn hotkey_listener() -> Box<dyn HotkeyListener> {
     Box::new(MacHotkeys::new())
 }
 
-/// Microphone (AVCaptureDevice) plus Accessibility (AXIsProcessTrusted).
-/// Both are separate TCC grants and either can be revoked at any time.
+#[link(name = "ApplicationServices", kind = "framework")]
+extern "C" {
+    fn AXIsProcessTrustedWithOptions(options: CFDictionaryRef) -> bool;
+
+    /// Key for the one option this call takes: whether to show the system
+    /// prompt when the answer is "not trusted".
+    static kAXTrustedCheckOptionPrompt: CFStringRef;
+}
+
+/// Whether Accessibility has been granted.
+///
+/// Only Accessibility. The microphone is a separate TCC grant, but macOS
+/// prompts for it by itself the first time the audio device is opened, so
+/// there is nothing here that asking early would improve.
 pub fn permissions_granted() -> bool {
-    // TODO: AXIsProcessTrustedWithOptions with kAXTrustedCheckOptionPrompt
-    // false, and AVCaptureDevice.authorizationStatus(for: .audio).
-    false
+    accessibility_trusted(false)
+}
+
+/// Ask for Accessibility, showing the system prompt if it is not granted.
+///
+/// The prompt is also what *registers* the app in System Settings › Privacy &
+/// Security › Accessibility. An app that never calls this never appears in that
+/// list at all, so there is nothing for the user to switch on — which reads as
+/// the app being broken rather than unpermitted.
+pub fn request_permissions() -> bool {
+    accessibility_trusted(true)
+}
+
+fn accessibility_trusted(prompt: bool) -> bool {
+    unsafe {
+        let key = CFString::wrap_under_get_rule(kAXTrustedCheckOptionPrompt);
+        let value = CFBoolean::from(prompt);
+        let options = CFDictionary::from_CFType_pairs(&[(key.as_CFType(), value.as_CFType())]);
+        AXIsProcessTrustedWithOptions(options.as_concrete_TypeRef())
+    }
 }
 
 pub fn open_permission_settings() {
-    // TODO: open
-    // x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility
+    // Ask first. If the grant is missing this both prompts and creates the
+    // entry, so the pane we open next has a row to toggle.
+    request_permissions();
+
     let _ = std::process::Command::new("open")
         .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
         .spawn();
