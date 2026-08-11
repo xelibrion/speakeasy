@@ -9,9 +9,11 @@
  * Keep the rule this layer has always followed: render what the core reports,
  * decide nothing. Every button here is one `invoke` and no local state.
  */
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open } from "@tauri-apps/plugin-dialog";
 
 import {
+  bindHotkey,
   cancelHotkeyCapture,
   cancelModelDownload,
   captureHotkey,
@@ -72,6 +74,17 @@ export async function mountSettings(app: HTMLElement): Promise<void> {
 
   await renderPermissions(banner);
 
+  // The window is created hidden at startup, so this webview loads before the
+  // user has had any chance to grant anything — and showing the window again
+  // does not remount. Without re-checking, the banner answers a question asked
+  // once, at launch, and goes on claiming the grant is missing forever.
+  //
+  // Focus is the right moment: it is what happens on the way back from System
+  // Settings, which is where the banner's own button sends people.
+  void getCurrentWindow().onFocusChanged(({ payload: focused }) => {
+    if (focused) void renderPermissions(banner);
+  });
+
   // Paired rather than kept in parallel arrays, so the selected state cannot
   // drift out of step with the tab it describes.
   const entries = TABS.map((tab) => {
@@ -111,7 +124,13 @@ export async function mountSettings(app: HTMLElement): Promise<void> {
  */
 async function renderPermissions(banner: HTMLElement): Promise<void> {
   banner.replaceChildren();
-  if (await permissionsGranted()) return;
+  if (await permissionsGranted()) {
+    // The grant may have only just arrived, in which case the binding failed
+    // at startup and nothing has retried it. Clearing the banner without this
+    // would report success above a key that still does nothing.
+    await bindHotkey().catch((err: unknown) => console.warn("could not bind the hotkey", err));
+    return;
+  }
 
   const text = element("span");
   text.textContent = "Speakeasy needs Accessibility access to type for you.";

@@ -239,6 +239,9 @@ export const setHotkey = (hotkey: Hotkey) => invoke<void>("set_hotkey", { hotkey
 export const captureHotkey = () => invoke<void>("capture_hotkey");
 export const cancelHotkeyCapture = () => invoke<void>("cancel_hotkey_capture");
 
+/** Retry the binding, for a grant that arrived after startup. */
+export const bindHotkey = () => invoke<void>("bind_hotkey");
+
 export const permissionsGranted = () => invoke<boolean>("permissions_granted");
 export const openPermissionSettings = () => invoke<void>("open_permission_settings");
 

@@ -91,6 +91,18 @@ pub fn cancel_hotkey_capture() {
     crate::hotkey::cancel_capture();
 }
 
+/// Bind the configured hotkey again.
+///
+/// For the grant arriving late: registration at startup fails without
+/// Accessibility, and nothing retries it, so a user who grants the permission
+/// and comes back would have a settings window claiming everything is fine
+/// above a key that does nothing.
+#[tauri::command]
+pub fn bind_hotkey(engine: TauriState<'_, Engine>) -> Result<(), String> {
+    crate::hotkey::register(engine.inner().clone(), &engine.config().hotkey)
+        .map_err(|err| err.to_string())
+}
+
 #[tauri::command]
 pub fn permissions_granted() -> bool {
     speakeasy_platform::permissions_granted()

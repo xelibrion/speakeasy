@@ -146,6 +146,7 @@ fn main() {
             commands::set_hotkey,
             commands::capture_hotkey,
             commands::cancel_hotkey_capture,
+            commands::bind_hotkey,
             commands::permissions_granted,
             commands::open_permission_settings,
         ])
