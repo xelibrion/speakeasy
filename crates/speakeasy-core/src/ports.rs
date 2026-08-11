@@ -24,6 +24,15 @@ pub trait AudioSource: Send + Sync {
     /// Stop capturing and return everything recorded since `start`.
     fn stop(&self) -> Result<Vec<f32>>;
 
+    /// Everything captured so far, at [`crate::TARGET_SAMPLE_RATE`], without
+    /// ending the recording. Empty when not recording.
+    ///
+    /// Returns the whole buffer rather than taking an offset deliberately: an
+    /// offset would have to be mapped between the device's native rate and
+    /// 16 kHz on every call, and that arithmetic is where an off-by-one becomes
+    /// a word cut in half. The caller slices what it wants.
+    fn snapshot(&self) -> Result<Vec<f32>>;
+
     /// Rolling input level in 0.0..=1.0, for the recording indicator.
     /// Returns 0.0 when not recording.
     fn level(&self) -> f32;
@@ -57,6 +66,30 @@ pub trait Transcriber: Send + Sync {
     /// intact when this fails — a bad swap should cost the user nothing, which
     /// is what lets the download flow verify and load before committing.
     fn load(&self, path: &Path) -> Result<()>;
+}
+
+/// A span of speech within a buffer, in seconds from its start.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SpeechSegment {
+    pub start: f32,
+    pub end: f32,
+}
+
+/// Finds speech within captured audio.
+///
+/// Separate from [`Transcriber`] rather than folded into it, per the contract
+/// on that trait: streaming arrives as a new port. What a preview needs is not
+/// more transcription but the answer to "has this utterance finished?", which
+/// is what lets text be committed and then never revised.
+///
+/// An energy threshold cannot answer it. Background noise keeps the level high
+/// exactly where the gate is most needed, and whisper hallucinates confidently
+/// on non-speech audio — a quiet buffer comes back as "Thank you." rather than
+/// as nothing.
+pub trait SpeechSegmenter: Send + Sync {
+    /// Speech spans within `samples`, which is mono f32 at
+    /// [`crate::TARGET_SAMPLE_RATE`]. Empty means no speech.
+    fn segments(&self, samples: &[f32]) -> Result<Vec<SpeechSegment>>;
 }
 
 /// Fetches a model file over the network.

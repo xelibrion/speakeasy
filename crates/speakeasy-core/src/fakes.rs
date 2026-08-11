@@ -11,7 +11,7 @@ use crate::config::Hotkey;
 use crate::error::{Error, Result};
 use crate::ports::{
     AudioSource, CaptureCallback, HotkeyCallback, HotkeyEvent, HotkeyListener, ModelFetcher,
-    TextSink, Transcriber,
+    SpeechSegment, SpeechSegmenter, TextSink, Transcriber,
 };
 
 /// Returns a canned buffer from `stop`, and records whether it is capturing.
@@ -55,6 +55,13 @@ impl AudioSource for FakeAudio {
 
     fn stop(&self) -> Result<Vec<f32>> {
         *self.recording.lock().expect("recording mutex poisoned") = false;
+        Ok(self.samples.clone())
+    }
+
+    fn snapshot(&self) -> Result<Vec<f32>> {
+        if !self.is_recording() {
+            return Ok(Vec::new());
+        }
         Ok(self.samples.clone())
     }
 
@@ -270,6 +277,32 @@ impl ModelFetcher for Arc<FakeFetcher> {
     }
 }
 
+/// Reports scripted spans, ignoring the audio.
+pub struct FakeSegmenter {
+    result: Result<Vec<SpeechSegment>>,
+}
+
+impl FakeSegmenter {
+    pub fn returning(spans: Vec<SpeechSegment>) -> Self {
+        Self { result: Ok(spans) }
+    }
+
+    /// No speech at all — what a detector reports during a pause.
+    pub fn silent() -> Self {
+        Self::returning(Vec::new())
+    }
+
+    pub fn failing(error: Error) -> Self {
+        Self { result: Err(error) }
+    }
+}
+
+impl SpeechSegmenter for FakeSegmenter {
+    fn segments(&self, _samples: &[f32]) -> Result<Vec<SpeechSegment>> {
+        self.result.clone()
+    }
+}
+
 /// Records everything injected so tests can assert on it.
 #[derive(Default)]
 pub struct FakeSink {
@@ -408,6 +441,31 @@ impl HotkeyListener for Arc<FakeHotkeys> {
 mod tests {
     use super::*;
     use crate::config::ModifierKey;
+
+    /// A snapshot must not end the recording — that is the whole point of it.
+    #[test]
+    fn a_snapshot_leaves_the_recording_running() {
+        let audio = FakeAudio::with_samples(vec![0.25; 16_000]);
+        audio.start().expect("start");
+
+        let snapshot = audio.snapshot().expect("snapshot");
+
+        assert_eq!(snapshot.len(), 16_000);
+        assert!(audio.is_recording(), "snapshot must not stop capture");
+    }
+
+    #[test]
+    fn a_fake_segmenter_reports_the_spans_it_was_given() {
+        let segmenter = FakeSegmenter::returning(vec![SpeechSegment {
+            start: 0.2,
+            end: 1.4,
+        }]);
+
+        let spans = segmenter.segments(&[0.0; 16_000]).expect("spans");
+
+        assert_eq!(spans.len(), 1);
+        assert_eq!(spans[0].end, 1.4);
+    }
 
     #[test]
     fn a_capture_reports_the_key_that_was_pressed() {

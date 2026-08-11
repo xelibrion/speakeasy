@@ -35,8 +35,8 @@ pub use event::{Event, ModelStatus, State};
 pub use hotkey::{ChordMods, KeyCode};
 pub use models::{ModelId, ModelInfo};
 pub use ports::{
-    AudioSource, CaptureCallback, HotkeyCallback, HotkeyEvent, HotkeyListener, TextSink,
-    Transcriber,
+    AudioSource, CaptureCallback, HotkeyCallback, HotkeyEvent, HotkeyListener, SpeechSegment,
+    SpeechSegmenter, TextSink, Transcriber,
 };
 
 /// Sample rate every [`Transcriber`] implementation expects.

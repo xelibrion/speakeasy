@@ -213,6 +213,21 @@ impl AudioSource for CpalAudioSource {
         resample(&samples, rate, TARGET_SAMPLE_RATE)
     }
 
+    fn snapshot(&self) -> Result<Vec<f32>> {
+        // Copy out under the lock and resample after releasing it: the audio
+        // callback takes this same lock on every buffer and must never wait on
+        // a resample. Same shape as `spectrum` below, for the same reason.
+        let (samples, rate) = {
+            let guard = self.capture.lock().expect("capture mutex poisoned");
+            (guard.samples.clone(), guard.native_rate)
+        };
+
+        if rate == 0 || rate == TARGET_SAMPLE_RATE || samples.is_empty() {
+            return Ok(samples);
+        }
+        resample(&samples, rate, TARGET_SAMPLE_RATE)
+    }
+
     fn level(&self) -> f32 {
         self.capture.lock().expect("capture mutex poisoned").level
     }
