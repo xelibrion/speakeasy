@@ -61,6 +61,12 @@ pub struct Config {
     /// Drop recordings shorter than this — usually an accidental hotkey tap.
     pub min_recording_ms: u64,
 
+    /// Whether to show recognised text in the widget while the user speaks.
+    ///
+    /// Costs a decode every 1.5s for the whole time the key is held, so it is
+    /// worth being able to turn off on battery even though it defaults on.
+    pub transcript_preview: bool,
+
     /// Where the user dragged the status widget, in physical screen pixels.
     /// `None` means "wherever the shell puts it by default".
     ///
@@ -301,6 +307,7 @@ impl Default for Config {
             language: None,
             injection_mode: InjectionMode::Paste,
             min_recording_ms: 250,
+            transcript_preview: true,
             widget_position: None,
         }
     }
@@ -310,6 +317,18 @@ impl Default for Config {
 mod tests {
     use super::*;
     use crate::testing::TempDir;
+
+    /// An existing config predates this field and must keep loading.
+    #[test]
+    fn a_config_without_the_preview_field_defaults_it_on() {
+        let dir = TempDir::new("preview-default");
+        let path = dir.join("config.json");
+        std::fs::write(&path, r#"{"activation":"toggle"}"#).expect("write");
+
+        let config = Config::load(&path).expect("old configs still load");
+
+        assert!(config.transcript_preview);
+    }
 
     #[test]
     fn a_missing_file_loads_the_defaults() {

@@ -14,7 +14,16 @@ use crate::error::{Error, Result};
 use crate::event::{Event, ModelStatus, State};
 use crate::models::catalog::{self, ModelId, ModelInfo, CATALOG};
 use crate::models::ModelManager;
-use crate::ports::{AudioSource, HotkeyEvent, ModelFetcher, TextSink, Transcriber};
+use crate::ports::{
+    AudioSource, HotkeyEvent, ModelFetcher, SpeechSegmenter, TextSink, Transcriber,
+};
+use crate::preview::{decide, Tick};
+
+/// How often a preview decode runs while recording.
+///
+/// A decode costs ~0.31s on the measured hardware, so this is roughly a 20%
+/// duty cycle. A constant rather than a setting until it has been lived with.
+const PREVIEW_INTERVAL: std::time::Duration = std::time::Duration::from_millis(1500);
 
 /// What a hotkey event means, given the activation mode and the current state.
 ///
@@ -49,6 +58,19 @@ struct Inner {
     state: Mutex<State>,
     started_at: Mutex<Option<Instant>>,
     subscribers: Mutex<Vec<Sender<Event>>>,
+    /// `None` disables previews entirely, which is what a shell with no
+    /// detector — or a headless test — gets by doing nothing.
+    segmenter: Mutex<Option<Arc<dyn SpeechSegmenter>>>,
+    preview: Mutex<Preview>,
+}
+
+/// Preview progress within one recording.
+#[derive(Default)]
+struct Preview {
+    /// Text from utterances that have finished. Never revised.
+    committed: String,
+    /// How much of the 16 kHz stream `committed` accounts for.
+    committed_samples: usize,
 }
 
 impl Engine {
@@ -70,6 +92,8 @@ impl Engine {
             state: Mutex::new(State::Idle),
             started_at: Mutex::new(None),
             subscribers: Mutex::new(Vec::new()),
+            segmenter: Mutex::new(None),
+            preview: Mutex::new(Preview::default()),
         });
 
         // The manager's status changes become ordinary events, so a shell
@@ -123,6 +147,20 @@ impl Engine {
             .config_path
             .lock()
             .expect("config path mutex poisoned") = Some(path);
+        self
+    }
+
+    /// Enable previews, using `segmenter` to find where utterances end.
+    ///
+    /// Chained like [`Engine::persisting_to`] rather than added to `new`, which
+    /// already takes six arguments — and so that a shell without a detector
+    /// keeps working by changing nothing.
+    pub fn with_segmenter(self, segmenter: Arc<dyn SpeechSegmenter>) -> Self {
+        *self
+            .inner
+            .segmenter
+            .lock()
+            .expect("segmenter mutex poisoned") = Some(segmenter);
         self
     }
 
@@ -241,8 +279,134 @@ impl Engine {
             .started_at
             .lock()
             .expect("started_at mutex poisoned") = Some(Instant::now());
+        *self.inner.preview.lock().expect("preview mutex poisoned") = Preview::default();
         self.transition(State::Recording);
+        self.spawn_preview_loop();
         Ok(())
+    }
+
+    /// Tick previews until the recording ends.
+    ///
+    /// Exits on any state other than `Recording`, so a release, a cancel and a
+    /// failure all stop it without needing to be told.
+    fn spawn_preview_loop(&self) {
+        let enabled = self
+            .inner
+            .segmenter
+            .lock()
+            .expect("segmenter mutex poisoned")
+            .is_some();
+        if !enabled || !self.config().transcript_preview {
+            return;
+        }
+
+        let engine = self.clone();
+        std::thread::spawn(move || {
+            while matches!(engine.state(), State::Recording) {
+                std::thread::sleep(PREVIEW_INTERVAL);
+                engine.preview_tick();
+            }
+        });
+    }
+
+    /// One preview pass: decode what has been said since the last commit and
+    /// announce it.
+    ///
+    /// Best-effort throughout. Every failure here is logged and skipped rather
+    /// than transitioning to `Failed` — a preview must never cost the user a
+    /// dictation.
+    fn preview_tick(&self) {
+        if !matches!(self.state(), State::Recording) {
+            return;
+        }
+        if !self.config().transcript_preview {
+            return;
+        }
+        let Some(segmenter) = self
+            .inner
+            .segmenter
+            .lock()
+            .expect("segmenter mutex poisoned")
+            .clone()
+        else {
+            return;
+        };
+
+        let all = match self.inner.audio.snapshot() {
+            Ok(samples) => samples,
+            Err(err) => {
+                tracing::warn!(%err, "could not read the recording for a preview");
+                return;
+            }
+        };
+
+        let start = self
+            .inner
+            .preview
+            .lock()
+            .expect("preview mutex poisoned")
+            .committed_samples;
+        if all.len() <= start {
+            return;
+        }
+        let slice = &all[start..];
+        let slice_seconds = slice.len() as f32 / crate::TARGET_SAMPLE_RATE as f32;
+
+        let spans = match segmenter.segments(slice) {
+            Ok(spans) => spans,
+            Err(err) => {
+                tracing::warn!(%err, "could not find speech for a preview");
+                return;
+            }
+        };
+
+        let (audio, commit_through) = match decide(slice_seconds, &spans) {
+            Tick::Skip => return,
+            Tick::Live => (slice, None),
+            Tick::Commit { through_seconds } => {
+                let end = ((through_seconds * crate::TARGET_SAMPLE_RATE as f32) as usize)
+                    .min(slice.len());
+                (&slice[..end], Some(end))
+            }
+        };
+
+        let language = self.config().language;
+        let text = match self
+            .inner
+            .transcriber
+            .transcribe(audio, language.as_deref())
+        {
+            Ok(text) => text.trim().to_string(),
+            Err(err) => {
+                tracing::warn!(%err, "could not decode a preview");
+                return;
+            }
+        };
+
+        // Built under the lock, emitted after releasing it: a subscriber that
+        // calls back in while we still held it would deadlock.
+        let display = {
+            let mut preview = self.inner.preview.lock().expect("preview mutex poisoned");
+            match commit_through {
+                Some(end) => {
+                    if !text.is_empty() {
+                        if !preview.committed.is_empty() {
+                            preview.committed.push(' ');
+                        }
+                        preview.committed.push_str(&text);
+                    }
+                    preview.committed_samples += end;
+                    preview.committed.clone()
+                }
+                None if preview.committed.is_empty() => text,
+                None => format!("{} {}", preview.committed, text),
+            }
+        };
+
+        if display.is_empty() {
+            return;
+        }
+        self.emit(Event::TranscriptPreview { text: display });
     }
 
     /// Hotkey released: stop capture, transcribe, inject.
@@ -555,6 +719,170 @@ mod tests {
             },
         );
         (engine, sink)
+    }
+
+    fn engine_with_segmenter(
+        transcript: &str,
+        spans: Vec<crate::ports::SpeechSegment>,
+    ) -> (Engine, Arc<FakeSink>) {
+        let (engine, sink) = engine(transcript);
+        (
+            engine.with_segmenter(Arc::new(crate::fakes::FakeSegmenter::returning(spans))),
+            sink,
+        )
+    }
+
+    /// One second of speech in a one-second buffer: still in progress.
+    fn running() -> Vec<crate::ports::SpeechSegment> {
+        vec![crate::ports::SpeechSegment {
+            start: 0.0,
+            end: 0.95,
+        }]
+    }
+
+    /// Speech that ended well before the buffer did: finished, so committable.
+    fn settled() -> Vec<crate::ports::SpeechSegment> {
+        vec![crate::ports::SpeechSegment {
+            start: 0.0,
+            end: 0.2,
+        }]
+    }
+
+    #[test]
+    fn a_tick_previews_text_while_recording() {
+        let (engine, _sink) = engine_with_segmenter("hello there", running());
+        let events = engine.subscribe();
+        engine.begin_recording().expect("recording should start");
+
+        engine.preview_tick();
+
+        assert!(events.try_iter().any(
+            |event| matches!(event, Event::TranscriptPreview { text } if text == "hello there")
+        ));
+    }
+
+    /// The silence gate. Whisper invents words when handed a quiet buffer, so
+    /// a pause must produce no preview at all rather than an empty one.
+    #[test]
+    fn silence_produces_no_preview() {
+        let (engine, _sink) = engine("should never appear");
+        let engine = engine.with_segmenter(Arc::new(crate::fakes::FakeSegmenter::silent()));
+        let events = engine.subscribe();
+        engine.begin_recording().expect("recording should start");
+
+        engine.preview_tick();
+
+        assert!(!events
+            .try_iter()
+            .any(|event| matches!(event, Event::TranscriptPreview { .. })));
+    }
+
+    /// The point of the whole design: text shown once does not change.
+    #[test]
+    fn committed_text_survives_a_later_tick() {
+        let (engine, _sink) = engine_with_segmenter("first part", settled());
+        let events = engine.subscribe();
+        engine.begin_recording().expect("recording should start");
+
+        engine.preview_tick();
+        engine.preview_tick();
+
+        let previews: Vec<String> = events
+            .try_iter()
+            .filter_map(|event| match event {
+                Event::TranscriptPreview { text } => Some(text),
+                _ => None,
+            })
+            .collect();
+        assert!(!previews.is_empty(), "expected at least one preview");
+        for preview in &previews {
+            assert!(
+                preview.starts_with("first part"),
+                "committed text was rewritten: {preview}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_segmenter_failure_leaves_the_final_transcript_intact() {
+        let (engine, sink) = engine("the real transcript");
+        let engine = engine.with_segmenter(Arc::new(crate::fakes::FakeSegmenter::failing(
+            Error::Other("vad exploded".to_string()),
+        )));
+        engine.begin_recording().expect("recording should start");
+
+        engine.preview_tick();
+        engine.finish_recording().expect("cycle should complete");
+
+        assert_eq!(sink.injected(), vec!["the real transcript".to_string()]);
+    }
+
+    #[test]
+    fn no_previews_without_a_segmenter() {
+        let (engine, _sink) = engine("hello");
+        let events = engine.subscribe();
+        engine.begin_recording().expect("recording should start");
+
+        engine.preview_tick();
+
+        assert!(!events
+            .try_iter()
+            .any(|event| matches!(event, Event::TranscriptPreview { .. })));
+    }
+
+    /// Turning it off must stop the decoding, not merely hide the text.
+    #[test]
+    fn no_previews_when_the_setting_is_off() {
+        let (engine, _sink) = engine_with_segmenter("hidden", running());
+        engine.set_config(Config {
+            transcript_preview: false,
+            min_recording_ms: 0,
+            ..Config::default()
+        });
+        let events = engine.subscribe();
+        engine.begin_recording().expect("recording should start");
+
+        engine.preview_tick();
+
+        assert!(!events
+            .try_iter()
+            .any(|event| matches!(event, Event::TranscriptPreview { .. })));
+    }
+
+    #[test]
+    fn a_preview_does_not_survive_a_cancel() {
+        let (engine, sink) = engine_with_segmenter("abandoned", settled());
+        engine.begin_recording().expect("recording should start");
+        engine.preview_tick();
+
+        engine.cancel();
+
+        assert_eq!(engine.state(), State::Idle);
+        assert!(sink.injected().is_empty());
+    }
+
+    /// A preview from the previous dictation must not leak into the next one.
+    #[test]
+    fn a_new_recording_starts_with_no_committed_text() {
+        let (engine, _sink) = engine_with_segmenter("first", settled());
+        engine.begin_recording().expect("recording should start");
+        engine.preview_tick();
+        engine.cancel();
+
+        let events = engine.subscribe();
+        engine.begin_recording().expect("second recording starts");
+        engine.preview_tick();
+
+        let previews: Vec<String> = events
+            .try_iter()
+            .filter_map(|event| match event {
+                Event::TranscriptPreview { text } => Some(text),
+                _ => None,
+            })
+            .collect();
+        for preview in &previews {
+            assert_eq!(preview, "first", "text carried over from the last take");
+        }
     }
 
     #[test]

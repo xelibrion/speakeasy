@@ -19,6 +19,7 @@ pub mod event;
 pub mod hotkey;
 pub mod models;
 pub mod ports;
+pub mod preview;
 
 #[cfg(feature = "fakes")]
 pub mod fakes;

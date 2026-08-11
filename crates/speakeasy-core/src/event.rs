@@ -70,6 +70,18 @@ pub enum Event {
         text: String,
     },
 
+    /// Text recognised so far, while the user is still speaking.
+    ///
+    /// Advisory and display-only. The committed prefix and the live tail are
+    /// joined into one string because the widget renders only the tail of it
+    /// and has no way to style them differently; if that changes, this grows a
+    /// field rather than every consumer growing a rule.
+    ///
+    /// Never the text that gets injected — that is [`Event::Transcript`].
+    TranscriptPreview {
+        text: String,
+    },
+
     /// Injection succeeded; `chars` is what actually reached the focused app.
     Injected {
         chars: usize,
