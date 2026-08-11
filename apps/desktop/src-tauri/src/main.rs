@@ -143,6 +143,9 @@ fn main() {
             commands::select_model,
             commands::cancel_model_download,
             commands::remove_model,
+            commands::set_hotkey,
+            commands::capture_hotkey,
+            commands::cancel_hotkey_capture,
             commands::permissions_granted,
             commands::open_permission_settings,
         ])

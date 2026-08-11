@@ -61,6 +61,16 @@ pub fn forward_events(app: AppHandle, engine: Engine) {
                 }
             }
 
+            // No main-thread hop: this installs an event tap, not an AppKit
+            // window. Re-registering here rather than in the command is what
+            // keeps a rebinding from settings and one from a capture on the
+            // same path.
+            if let Event::HotkeyChanged { hotkey } = &event {
+                if let Err(err) = crate::hotkey::register(engine.clone(), hotkey) {
+                    tracing::warn!(%err, "could not bind the new hotkey");
+                }
+            }
+
             if let Err(err) = app.emit(EVENT, &event) {
                 tracing::warn!(%err, "failed to forward engine event to webview");
             }

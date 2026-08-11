@@ -16,8 +16,33 @@ use speakeasy_core::{Engine, Hotkey, HotkeyAction, HotkeyListener};
 /// The listener owns an OS-level tap and must outlive `setup`.
 static LISTENER: OnceLock<Box<dyn HotkeyListener>> = OnceLock::new();
 
+fn listener() -> &'static dyn HotkeyListener {
+    LISTENER
+        .get_or_init(speakeasy_platform::hotkey_listener)
+        .as_ref()
+}
+
+/// Read one binding from the keyboard and adopt it.
+///
+/// The captured key goes straight to the engine rather than back to the
+/// caller. `set_hotkey` then persists it and emits `HotkeyChanged`, which is
+/// what both re-registers the binding and tells the settings window — so there
+/// is one path for "the binding changed" instead of a second one that only
+/// capture uses.
+pub fn capture(engine: Engine) -> Result<(), Box<dyn std::error::Error>> {
+    listener().capture(Box::new(move |hotkey| {
+        tracing::info!(hotkey = hotkey.label(), "captured a new binding");
+        engine.set_hotkey(hotkey);
+    }))?;
+    Ok(())
+}
+
+pub fn cancel_capture() {
+    listener().cancel_capture();
+}
+
 pub fn register(engine: Engine, hotkey: &Hotkey) -> Result<(), Box<dyn std::error::Error>> {
-    let listener = LISTENER.get_or_init(speakeasy_platform::hotkey_listener);
+    let listener = listener();
 
     listener.register(
         hotkey,

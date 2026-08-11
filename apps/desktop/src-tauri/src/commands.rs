@@ -5,7 +5,7 @@
 //! core and the SwiftUI migration gets more expensive. Treat a non-trivial
 //! command body as a review failure.
 
-use speakeasy_core::{Config, Engine, ModelChoice, ModelId, ModelInfo, ModelStatus, State};
+use speakeasy_core::{Config, Engine, Hotkey, ModelChoice, ModelId, ModelInfo, ModelStatus, State};
 use tauri::State as TauriState;
 
 #[tauri::command]
@@ -72,6 +72,23 @@ pub fn cancel_model_download(engine: TauriState<'_, Engine>) {
 #[tauri::command]
 pub fn remove_model(engine: TauriState<'_, Engine>, id: ModelId) -> Result<(), String> {
     engine.remove_model(&id).map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+pub fn set_hotkey(engine: TauriState<'_, Engine>, hotkey: Hotkey) {
+    engine.set_hotkey(hotkey);
+}
+
+/// Returns as soon as the keyboard is armed, not when a key arrives. What was
+/// pressed comes back as a `HotkeyChanged` event like any other rebinding.
+#[tauri::command]
+pub fn capture_hotkey(engine: TauriState<'_, Engine>) -> Result<(), String> {
+    crate::hotkey::capture(engine.inner().clone()).map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+pub fn cancel_hotkey_capture() {
+    crate::hotkey::cancel_capture();
 }
 
 #[tauri::command]
