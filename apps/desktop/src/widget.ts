@@ -42,12 +42,14 @@ export function mountWidget(root: HTMLElement) {
         ${Array.from({ length: SPECTRUM_BANDS }, () => `<div class="bar"></div>`).join("")}
       </div>
       <div class="hint"></div>
+      <div class="preview"></div>
     </div>
   `;
 
   const pill = root.querySelector<HTMLElement>(".pill")!;
   const label = root.querySelector<HTMLElement>(".label")!;
   const hint = root.querySelector<HTMLElement>(".hint")!;
+  const preview = root.querySelector<HTMLElement>(".preview")!;
   const bars = Array.from(root.querySelectorAll<HTMLElement>(".bar"));
 
   let recording = false;
@@ -69,6 +71,9 @@ export function mountWidget(root: HTMLElement) {
     recording = state.state === "recording";
     hint.textContent = recording && config ? stopHint(config) : "";
     if (!recording) for (const bar of bars) bar.style.transform = "scaleY(0)";
+    // Cleared on the way out of recording, so a discarded tap or a cancel
+    // leaves no text behind to be mistaken for something that was inserted.
+    if (!recording) preview.textContent = "";
   };
 
   // rAF pauses when the window is hidden, so this costs nothing while idle.
@@ -93,6 +98,13 @@ export function mountWidget(root: HTMLElement) {
   void refreshConfig();
   void getState().then(render);
   void onEngineEvent((event) => {
+    if (event.type === "transcriptPreview") {
+      preview.textContent = event.text;
+      // The box is clamped to three lines and the newest words are at the
+      // bottom, so it has to be scrolled down to show them.
+      preview.scrollTop = preview.scrollHeight;
+      return;
+    }
     if (event.type !== "stateChanged") return;
     // Cheap, and only once per dictation: catches a hotkey or mode changed in
     // settings since the widget was last up.

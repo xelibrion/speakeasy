@@ -23,7 +23,7 @@
         "label": "widget",
         "title": "Speakeasy status",
         "width": 260,
-        "height": 112,
+        "height": 164,
         "resizable": false,
         "visible": false,
         "decorations": false,

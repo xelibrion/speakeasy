@@ -70,6 +70,8 @@ export type EngineEvent =
   | { type: "stateChanged"; state: State }
   | { type: "audioLevel"; level: number }
   | { type: "transcript"; text: string }
+  /** Advisory text while the user is still speaking. Never what gets injected. */
+  | { type: "transcriptPreview"; text: string }
   | { type: "injected"; chars: number }
   | { type: "failed"; error: EngineError }
   | { type: "hotkeyChanged"; hotkey: Hotkey }
@@ -146,6 +148,7 @@ export type Config = {
   language: string | null;
   injectionMode: InjectionMode;
   minRecordingMs: number;
+  transcriptPreview: boolean;
   widgetPosition: WidgetPosition | null;
 };
 

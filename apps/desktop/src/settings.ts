@@ -21,6 +21,7 @@ import {
   errorLabel,
   formatBytes,
   getConfig,
+  setConfig,
   getInstalledModels,
   getModelCatalog,
   getModelStatus,
@@ -147,6 +148,9 @@ async function mountDictation(panel: HTMLElement): Promise<void> {
 
   panel.append(
     await hotkeyRow(config),
+    toggleRow("Live preview", config.transcriptPreview, (value) => {
+      void setConfig({ ...config, transcriptPreview: value });
+    }),
     row("Insertion", config.injectionMode === "paste" ? "Paste" : "Type each character"),
     row("Language", config.language ?? "Auto-detect"),
   );
@@ -384,6 +388,25 @@ function row(label: string, value: string): HTMLElement {
   detail.textContent = value;
   row.append(name, detail);
   return row;
+}
+
+/** A labelled checkbox that writes straight back to config. */
+function toggleRow(
+  label: string,
+  checked: boolean,
+  onChange: (value: boolean) => void,
+): HTMLElement {
+  const line = element("div", "setting");
+  const name = element("span", "setting-label");
+  name.textContent = label;
+
+  const box = document.createElement("input");
+  box.type = "checkbox";
+  box.checked = checked;
+  box.addEventListener("change", () => onChange(box.checked));
+
+  line.append(name, box);
+  return line;
 }
 
 function element<K extends keyof HTMLElementTagNameMap>(

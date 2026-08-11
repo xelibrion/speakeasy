@@ -292,6 +292,29 @@ body:has(.widget) {
   display: none;
 }
 
+/* --- live preview ---------------------------------------------------- */
+
+/* The three most recent lines of what has been recognised so far.
+
+   Clamping alone would show the *first* three lines; the tail is what matters
+   while someone is still talking, so the box scrolls and widget.ts keeps it
+   pinned to the bottom. Fixed height rather than growing, so the pill never
+   resizes mid-dictation. */
+.preview {
+  max-height: calc(3 * 1.35em);
+  overflow: hidden;
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--muted);
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
+/* Present only once there are words; collapse rather than reserve a gap. */
+.preview:empty {
+  display: none;
+}
+
 /* --- spectrum -------------------------------------------------------- */
 
 .bars {
