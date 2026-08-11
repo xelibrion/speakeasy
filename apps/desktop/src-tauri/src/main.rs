@@ -116,6 +116,22 @@ fn main() {
             let trusted = speakeasy_platform::request_permissions();
             let can_tap = speakeasy_platform::permissions_granted();
             tracing::info!(trusted, can_tap, "accessibility at startup");
+
+            // An unsigned app launched from a DMG runs from a randomised
+            // read-only path, and TCC keys the grant to that path — so the
+            // permission is granted to an instance that will not exist next
+            // launch, and the app asks again forever. Worth saying out loud,
+            // because from the user's side it looks like the grant simply does
+            // not work.
+            if let Ok(exe) = std::env::current_exe() {
+                if exe.to_string_lossy().contains("AppTranslocation") {
+                    tracing::warn!(
+                        path = %exe.display(),
+                        "running translocated: copy Speakeasy.app to /Applications and \
+                         clear com.apple.quarantine, or the Accessibility grant cannot stick"
+                    );
+                }
+            }
             if !can_tap {
                 tracing::warn!("Accessibility has not been granted; the hotkey will not bind");
             }
