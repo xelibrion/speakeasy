@@ -266,5 +266,23 @@ intended approach in a `TODO`.
   `docs/superpowers/specs/2026-08-11-transcript-history-design.md`, not built)
 - signing, notarization, auto-update
 
+### Known: Accessibility is re-prompted on every launch
+
+An installed build asks for Accessibility each time it starts, even with the box
+ticked in System Settings. The app is **ad-hoc signed**, so it has no stable code
+identity for TCC to attach the grant to: the entry is created but does not match
+on the next launch. Clearing quarantine, moving to `/Applications` and
+re-toggling the checkbox all fail, because none of them change the identity.
+
+Signing with a stable identity fixes it. A free self-signed certificate is
+enough — Keychain Access › Certificate Assistant › Create a Certificate, type
+Code Signing — then build with `APPLE_SIGNING_IDENTITY` set. A Developer ID adds
+Gatekeeper acceptance and notarization, but is not what makes the grant stick.
+
+**Test this by launching from Finder, never from a terminal.** A binary started
+from a terminal has its TCC requests attributed to Terminal/iTerm, so it reports
+`trusted=true` whenever the terminal has Accessibility — regardless of whether
+the app itself was ever granted anything.
+
 `icons/icon.png` and `icons/tray.png` are generated placeholders — flat colour
 squares, enough to satisfy `generate_context!`. Replace before shipping.
