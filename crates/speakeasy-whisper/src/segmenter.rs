@@ -42,6 +42,16 @@ impl WhisperSegmenter {
         let context = WhisperVadContext::new(opened, params)
             .map_err(|err| Error::Other(format!("could not load the vad model: {err}")))?;
 
+        // Says "by design" because whisper.cpp has just printed
+        // `whisper_backend_init_gpu: no GPU found` on our behalf, which reads
+        // like a failure and is not one. It is also the wrong thing to worry
+        // about: the line to check for transcription is "speech model loaded".
+        tracing::info!(
+            model = opened,
+            backend = "CPU (by design: Silero aborts on Metal)",
+            "voice detector loaded"
+        );
+
         Ok(Self {
             context: Mutex::new(context),
         })

@@ -46,10 +46,26 @@ impl WhisperTranscriber {
             Error::Transcription(format!("model path is not UTF-8: {}", model_path.display()))
         })?;
 
-        let context = WhisperContext::new_with_params(path, WhisperContextParameters::default())
+        // `default()` sets `use_gpu` from whisper-rs's own `_gpu` feature, which
+        // our `metal` feature turns on. Read back rather than assumed: this is
+        // the one line that says whether transcription is on the GPU, and a
+        // feature that quietly stopped being enabled is exactly the kind of
+        // regression that only shows up as "dictation got slow".
+        let params = WhisperContextParameters::default();
+        let gpu = params.use_gpu;
+
+        let context = WhisperContext::new_with_params(path, params)
             .map_err(|err| Error::Transcription(format!("could not load {path}: {err}")))?;
 
-        tracing::info!(model = path, "whisper model loaded");
+        // Named "speech model", and the detector's line names itself, because
+        // whisper.cpp logs both contexts through the same hooks with nothing to
+        // tell them apart — a `no GPU found` from the detector reads as if
+        // transcription had fallen off the GPU.
+        tracing::info!(
+            model = path,
+            backend = if gpu { "Metal (GPU)" } else { "CPU" },
+            "speech model loaded"
+        );
         Ok(context)
     }
 
