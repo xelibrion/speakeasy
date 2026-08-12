@@ -171,6 +171,8 @@ fn main() {
             commands::audio_level,
             commands::audio_spectrum,
             commands::cancel,
+            commands::recoverable_transcript,
+            commands::copy_transcript,
             commands::model_catalog,
             commands::model_status,
             commands::installed_models,

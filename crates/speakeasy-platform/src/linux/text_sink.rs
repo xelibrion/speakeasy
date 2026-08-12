@@ -27,4 +27,13 @@ impl TextSink for X11TextSink {
             "X11 injection not implemented yet".to_string(),
         ))
     }
+
+    fn copy(&self, text: &str) -> Result<()> {
+        let _ = text;
+        // TODO: own the CLIPBOARD selection with x11rb, alongside the paste
+        // path above — the two want the same machinery.
+        Err(Error::Injection(
+            "X11 clipboard not implemented yet".to_string(),
+        ))
+    }
 }

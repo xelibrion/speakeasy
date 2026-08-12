@@ -39,6 +39,16 @@ pub fn cancel(engine: TauriState<'_, Engine>) {
 }
 
 #[tauri::command]
+pub fn recoverable_transcript(engine: TauriState<'_, Engine>) -> Option<String> {
+    engine.recoverable_transcript()
+}
+
+#[tauri::command]
+pub fn copy_transcript(engine: TauriState<'_, Engine>) -> Result<bool, String> {
+    engine.copy_transcript().map_err(|err| err.to_string())
+}
+
+#[tauri::command]
 pub fn model_catalog(engine: TauriState<'_, Engine>) -> Vec<ModelInfo> {
     engine.catalog().to_vec()
 }

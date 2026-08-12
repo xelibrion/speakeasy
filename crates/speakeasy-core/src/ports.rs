@@ -175,4 +175,16 @@ pub trait TextSink: Send + Sync {
     fn blocked_by(&self) -> Option<String> {
         None
     }
+
+    /// Put `text` on the system clipboard.
+    ///
+    /// The escape hatch for when [`TextSink::inject`] cannot deliver. Injection
+    /// needs somewhere to type; the clipboard needs nothing, so it still works
+    /// when a password field has killed event taps or when nothing on screen
+    /// wants text at all.
+    ///
+    /// Note this is not what paste-mode injection leaves behind: that restores
+    /// the user's previous clipboard shortly after pasting, so by the time
+    /// anyone reaches for it the transcript is gone.
+    fn copy(&self, text: &str) -> Result<()>;
 }

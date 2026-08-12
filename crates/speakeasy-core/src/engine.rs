@@ -62,6 +62,13 @@ struct Inner {
     /// detector — or a headless test — gets by doing nothing.
     segmenter: Mutex<Option<Arc<dyn SpeechSegmenter>>>,
     preview: Mutex<Preview>,
+    /// The last transcript that reached the injection step, kept so the user
+    /// can still retrieve it when delivery went wrong.
+    ///
+    /// Held until the next recording rather than cleared on use: a transcript
+    /// that failed to arrive is the one thing in this app that cannot be
+    /// reproduced, and a Copy button that works exactly once is a trap.
+    last_transcript: Mutex<Option<String>>,
 }
 
 /// Preview progress within one recording.
@@ -94,6 +101,7 @@ impl Engine {
             subscribers: Mutex::new(Vec::new()),
             segmenter: Mutex::new(None),
             preview: Mutex::new(Preview::default()),
+            last_transcript: Mutex::new(None),
         });
 
         // The manager's status changes become ordinary events, so a shell
@@ -473,6 +481,14 @@ impl Engine {
             return Ok(());
         }
         self.emit(Event::Transcript { text: text.clone() });
+        // Recorded before the attempt, not after a failure: the failure path
+        // returns early in several places, and a transcript saved only on the
+        // branch someone remembered is a transcript that goes missing.
+        *self
+            .inner
+            .last_transcript
+            .lock()
+            .expect("last_transcript mutex poisoned") = Some(text.clone());
 
         self.transition(State::Injecting);
         match self.inner.sink.inject(&text) {
@@ -489,6 +505,33 @@ impl Engine {
     }
 
     /// Abandon an in-flight recording without transcribing it.
+    /// The last transcript that reached the injection step, if any.
+    ///
+    /// What the widget asks to decide whether it has anything worth offering a
+    /// Copy button for. `None` means there is nothing to recover — a failure
+    /// before the microphone opened, say, where a Copy button would put an
+    /// empty string on the clipboard.
+    pub fn recoverable_transcript(&self) -> Option<String> {
+        self.inner
+            .last_transcript
+            .lock()
+            .expect("last_transcript mutex poisoned")
+            .clone()
+    }
+
+    /// Put the last transcript on the clipboard. `false` if there was none.
+    ///
+    /// The way out when injection could not deliver: the clipboard needs
+    /// nothing focused and survives secure input, so it works in every case
+    /// [`TextSink::inject`] does not.
+    pub fn copy_transcript(&self) -> Result<bool> {
+        let Some(text) = self.recoverable_transcript() else {
+            return Ok(false);
+        };
+        self.inner.sink.copy(&text)?;
+        Ok(true)
+    }
+
     pub fn cancel(&self) {
         let _ = self.inner.audio.stop();
         *self
@@ -1132,6 +1175,91 @@ mod tests {
                 error: Error::SecureInputActive("Terminal".to_string())
             }
         );
+    }
+
+    /// The case the Copy button exists for: secure input that arrived *after*
+    /// the user started speaking, so the pre-check could not have caught it and
+    /// there is a whole transcript with nowhere to go.
+    #[test]
+    fn a_failed_injection_leaves_the_transcript_recoverable() {
+        let sink = Arc::new(FakeSink::failing(Error::SecureInputActive(
+            "1Password".to_string(),
+        )));
+        let engine = Engine::new(
+            Box::new(FakeAudio::with_samples(vec![0.0; 16_000])),
+            Arc::new(FakeTranscriber::returning("the paragraph I just spoke")),
+            Box::new(sink.clone()),
+            Box::new(FakeFetcher::serving(Vec::new())),
+            unused_models_dir(),
+            Config {
+                min_recording_ms: 0,
+                ..Config::default()
+            },
+        );
+
+        engine.begin_recording().expect("recording should start");
+        engine
+            .finish_recording()
+            .expect_err("injection should fail");
+
+        assert_eq!(
+            engine.recoverable_transcript(),
+            Some("the paragraph I just spoke".to_string())
+        );
+        assert!(engine.copy_transcript().expect("copying should work"));
+        assert_eq!(
+            sink.copied(),
+            vec!["the paragraph I just spoke".to_string()]
+        );
+    }
+
+    /// Copying must not be a one-shot. The user may paste into the wrong
+    /// window, or lose it to a clipboard manager, and the transcript is the one
+    /// thing here that cannot be produced again.
+    #[test]
+    fn the_transcript_survives_being_copied() {
+        let sink = Arc::new(FakeSink::failing(Error::Injection("nope".to_string())));
+        let engine = Engine::new(
+            Box::new(FakeAudio::with_samples(vec![0.0; 16_000])),
+            Arc::new(FakeTranscriber::returning("say it twice")),
+            Box::new(sink.clone()),
+            Box::new(FakeFetcher::serving(Vec::new())),
+            unused_models_dir(),
+            Config {
+                min_recording_ms: 0,
+                ..Config::default()
+            },
+        );
+
+        engine.begin_recording().expect("recording should start");
+        engine
+            .finish_recording()
+            .expect_err("injection should fail");
+
+        assert!(engine.copy_transcript().expect("first copy"));
+        assert!(engine.copy_transcript().expect("second copy"));
+        assert_eq!(sink.copied().len(), 2);
+    }
+
+    /// A failure before anything was transcribed has nothing to offer, and a
+    /// Copy button there would put an empty string on the clipboard.
+    #[test]
+    fn a_failure_with_no_transcript_has_nothing_to_recover() {
+        let engine = Engine::new(
+            Box::new(FakeAudio::with_samples(vec![0.0; 16_000])),
+            Arc::new(FakeTranscriber::returning("never reached")),
+            Box::new(Arc::new(FakeSink::blocked_by("1Password"))),
+            Box::new(FakeFetcher::serving(Vec::new())),
+            unused_models_dir(),
+            Config::default(),
+        );
+
+        engine
+            .begin_recording()
+            .expect_err("recording should be refused");
+
+        assert_eq!(engine.recoverable_transcript(), None);
+        assert!(!engine.copy_transcript().expect("copying should be a no-op"));
     }
 
     /// The point of the whole check: a blocked machine costs the user a key

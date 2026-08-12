@@ -257,6 +257,12 @@ export const getAudioLevel = () => invoke<number>("audio_level");
 /** `SPECTRUM_BANDS` values, low frequency first. See `core::ports::AudioSource`. */
 export const getAudioSpectrum = () => invoke<number[]>("audio_spectrum");
 export const cancel = () => invoke<void>("cancel");
+
+/** The last transcript that reached injection, or null if there is none. */
+export const getRecoverableTranscript = () => invoke<string | null>("recoverable_transcript");
+
+/** Put that transcript on the clipboard. `false` if there was nothing to copy. */
+export const copyTranscript = () => invoke<boolean>("copy_transcript");
 export const setHotkey = (hotkey: Hotkey) => invoke<void>("set_hotkey", { hotkey });
 
 /**

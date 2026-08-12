@@ -315,6 +315,44 @@ body:has(.widget) {
   display: none;
 }
 
+/* --- rescue row ------------------------------------------------------ */
+
+/* Shown when a dictation failed with a transcript behind it, so the text is a
+   click away rather than lost.
+
+   The buttons sit inside `[data-tauri-drag-region]`, which would otherwise
+   swallow their clicks and drag the pill instead: the whole pill is the drag
+   handle. `-webkit-app-region: no-drag` carves them back out.
+
+   There is no keyboard route out of here on purpose — the widget is a
+   non-activating panel that refuses key status, so Escape never arrives. */
+.rescue {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+  margin-top: 2px;
+}
+
+.rescue[hidden] {
+  display: none;
+}
+
+.rescue button {
+  -webkit-app-region: no-drag;
+  font-size: 11px;
+  padding: 3px 10px;
+  border: 0;
+  border-radius: 5px;
+  background: var(--accent, #3b6ea5);
+  color: #fff;
+  cursor: pointer;
+}
+
+.rescue button.secondary {
+  background: rgb(255 255 255 / 0.12);
+  color: var(--muted);
+}
+
 /* --- spectrum -------------------------------------------------------- */
 
 .bars {

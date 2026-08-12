@@ -331,6 +331,7 @@ impl SpeechSegmenter for FakeSegmenter {
 #[derive(Default)]
 pub struct FakeSink {
     injected: Mutex<Vec<String>>,
+    copied: Mutex<Vec<String>>,
     fail_with: Option<Error>,
     blocked_by: Option<String>,
 }
@@ -357,6 +358,11 @@ impl FakeSink {
             .expect("injected mutex poisoned")
             .clone()
     }
+
+    /// What reached the clipboard, so a test can tell recovery from delivery.
+    pub fn copied(&self) -> Vec<String> {
+        self.copied.lock().expect("copied mutex poisoned").clone()
+    }
 }
 
 impl TextSink for FakeSink {
@@ -374,6 +380,17 @@ impl TextSink for FakeSink {
     fn blocked_by(&self) -> Option<String> {
         self.blocked_by.clone()
     }
+
+    /// Deliberately not gated on `fail_with`: the clipboard is the fallback for
+    /// a sink that cannot inject, so a test that fails injection must still be
+    /// able to prove the text was recoverable.
+    fn copy(&self, text: &str) -> Result<()> {
+        self.copied
+            .lock()
+            .expect("copied mutex poisoned")
+            .push(text.to_string());
+        Ok(())
+    }
 }
 
 /// So a test can hold an `Arc<FakeSink>` to assert on while the engine owns a
@@ -385,6 +402,10 @@ impl TextSink for Arc<FakeSink> {
 
     fn blocked_by(&self) -> Option<String> {
         self.as_ref().blocked_by()
+    }
+
+    fn copy(&self, text: &str) -> Result<()> {
+        self.as_ref().copy(text)
     }
 }
 

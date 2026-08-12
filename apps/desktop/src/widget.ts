@@ -9,9 +9,12 @@
  * event stream cheap.
  */
 import {
+  cancel,
+  copyTranscript,
   errorLabel,
   getAudioSpectrum,
   getConfig,
+  getRecoverableTranscript,
   getState,
   onEngineEvent,
   stopHint,
@@ -43,6 +46,10 @@ export function mountWidget(root: HTMLElement) {
       </div>
       <div class="hint"></div>
       <div class="preview"></div>
+      <div class="rescue">
+        <button class="copy">Copy</button>
+        <button class="dismiss secondary">Dismiss</button>
+      </div>
     </div>
   `;
 
@@ -50,7 +57,28 @@ export function mountWidget(root: HTMLElement) {
   const label = root.querySelector<HTMLElement>(".label")!;
   const hint = root.querySelector<HTMLElement>(".hint")!;
   const preview = root.querySelector<HTMLElement>(".preview")!;
+  const rescue = root.querySelector<HTMLElement>(".rescue")!;
+  const copyButton = root.querySelector<HTMLButtonElement>(".copy")!;
+  const dismissButton = root.querySelector<HTMLButtonElement>(".dismiss")!;
   const bars = Array.from(root.querySelectorAll<HTMLElement>(".bar"));
+
+  // Clicks land even though the panel refuses key status — mouse events go to
+  // the window under the cursor regardless; it is only keyboard focus that is
+  // refused. That also rules out dismissing with Escape: nothing here will ever
+  // receive a keystroke, so the way out has to be a button.
+  copyButton.addEventListener("click", () => {
+    void (async () => {
+      const copied = await copyTranscript().catch((err: unknown) => {
+        console.warn("speakeasy: could not copy the transcript", err);
+        return false;
+      });
+      // The pill stays up. Copying is not an acknowledgement that the text
+      // arrived somewhere useful, and closing on it would take the second
+      // chance away from anyone who pasted into the wrong window.
+      copyButton.textContent = copied ? "Copied" : "Nothing to copy";
+    })();
+  });
+  dismissButton.addEventListener("click", () => void cancel());
 
   let recording = false;
   // The hotkey and the activation mode can both change at runtime, so the hint
@@ -74,7 +102,40 @@ export function mountWidget(root: HTMLElement) {
     // Cleared on the way out of recording, so a discarded tap or a cancel
     // leaves no text behind to be mistaken for something that was inserted.
     if (!recording) preview.textContent = "";
+
+    // Last, and deliberately after that clear: on a failure this puts the
+    // stranded transcript back into the same box, which is the one case where
+    // text surviving the end of a recording is the point.
+    //
+    // Offered whenever the failure left a transcript behind, which is what
+    // separates a recoverable failure from a total one — secure input caught
+    // before recording has nothing to copy, secure input that arrived
+    // mid-dictation has a whole paragraph.
+    void showRescue(state);
   };
+
+  /**
+   * Show the rescue row when the failure left a transcript stranded.
+   *
+   * Asks the engine rather than remembering the last `transcript` event: the
+   * widget is a renderer, and a copy of the text kept here would be a second
+   * source of truth for the one string in this app that cannot be regenerated.
+   */
+  async function showRescue(state: State): Promise<void> {
+    if (state.state !== "failed") {
+      rescue.hidden = true;
+      return;
+    }
+
+    const text = await getRecoverableTranscript().catch(() => null);
+    rescue.hidden = text === null;
+    if (text === null) return;
+
+    copyButton.textContent = "Copy";
+    // Showing what would be copied, so the button is not a leap of faith.
+    preview.textContent = text;
+    preview.scrollTop = 0;
+  }
 
   // rAF pauses when the window is hidden, so this costs nothing while idle.
   const tick = async () => {

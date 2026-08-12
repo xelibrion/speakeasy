@@ -130,6 +130,14 @@ impl TextSink for MacTextSink {
     fn blocked_by(&self) -> Option<String> {
         super::secure_input::blocking_app()
     }
+
+    /// No focus handling and no secure-input check, unlike `inject`. Writing to
+    /// the pasteboard posts no events, so nothing here depends on a window
+    /// being ready to receive them — which is exactly why this still works when
+    /// injection does not.
+    fn copy(&self, text: &str) -> Result<()> {
+        pasteboard::write(text)
+    }
 }
 
 /// Minimal NSPasteboard access over the Objective-C runtime, to avoid pulling
