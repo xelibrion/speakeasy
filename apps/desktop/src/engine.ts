@@ -181,6 +181,26 @@ const KEY_LABELS: Record<string, string> = {
   right: "→",
   up: "↑",
   down: "↓",
+  contextMenu: "Menu",
+  // The punctuation and multi-word keys fall through to `toUpperCase()`
+  // otherwise, which renders "Page Down" as "PAGEDOWN" — a different name for
+  // the same binding, which is exactly what this table exists to prevent.
+  pageUp: "Page Up",
+  pageDown: "Page Down",
+  forwardDelete: "Forward Delete",
+  home: "Home",
+  end: "End",
+  minus: "-",
+  equal: "=",
+  leftBracket: "[",
+  rightBracket: "]",
+  backslash: "\\",
+  semicolon: ";",
+  quote: "'",
+  comma: ",",
+  period: ".",
+  slash: "/",
+  grave: "`",
 };
 
 /**

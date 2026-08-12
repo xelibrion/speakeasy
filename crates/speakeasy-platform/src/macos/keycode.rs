@@ -93,6 +93,9 @@ const TABLE: &[(KeyCode, u16)] = &[
     (KeyCode::ForwardDelete, 0x75),
     (KeyCode::End, 0x77),
     (KeyCode::PageDown, 0x79),
+    // No `kVK_*` constant exists for this one: Events.h only names keys Apple
+    // ships. macOS still reports the PC menu key positionally, as 110.
+    (KeyCode::ContextMenu, 0x6E),
 ];
 
 /// `None` for a key we cannot name — a media key, or a modifier, which reports

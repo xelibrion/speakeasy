@@ -153,13 +153,17 @@ pub enum KeyCode {
     PageUp,
     PageDown,
     ForwardDelete,
+    /// The menu key on a PC keyboard, between the right Alt and Ctrl. No Apple
+    /// keyboard has one, which makes it an unusually good push-to-talk binding:
+    /// nothing else on macOS wants it.
+    ContextMenu,
 }
 
 impl KeyCode {
     /// Every variant, so the platform crate can prove its mapping table is
     /// total in both directions. A one-way table silently drops keys during
     /// capture: the user presses F13, the tap reads it, and nothing comes back.
-    pub const ALL: [Self; 81] = [
+    pub const ALL: [Self; 82] = [
         Self::A,
         Self::B,
         Self::C,
@@ -241,6 +245,7 @@ impl KeyCode {
         Self::PageUp,
         Self::PageDown,
         Self::ForwardDelete,
+        Self::ContextMenu,
     ];
 
     /// How the key is written in a binding.
@@ -327,6 +332,7 @@ impl KeyCode {
             Self::PageUp => "Page Up",
             Self::PageDown => "Page Down",
             Self::ForwardDelete => "Forward Delete",
+            Self::ContextMenu => "Menu",
         }
     }
 }
