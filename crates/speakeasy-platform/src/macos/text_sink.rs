@@ -18,7 +18,7 @@ use std::ffi::c_void;
 use core_graphics::event::{CGEvent, CGEventFlags, CGEventTapLocation};
 use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
 use speakeasy_core::config::InjectionMode;
-use speakeasy_core::{Error, Result, TextSink};
+use speakeasy_core::{Delivery, Error, Result, TextSink};
 
 const KEY_V: u16 = 9;
 /// Longest run of UTF-16 units to attach to a single synthetic key event.
@@ -96,7 +96,7 @@ impl MacTextSink {
 }
 
 impl TextSink for MacTextSink {
-    fn inject(&self, text: &str) -> Result<usize> {
+    fn inject(&self, text: &str) -> Result<Delivery> {
         // Showing the widget can leave Speakeasy frontmost, and synthetic
         // keystrokes follow the frontmost app — into a panel that refuses key
         // status, which is to say nowhere. Put the focus back first.
@@ -118,13 +118,36 @@ impl TextSink for MacTextSink {
             return Err(Error::SecureInputActive(app));
         }
         if text.is_empty() {
-            return Ok(0);
+            return Ok(Delivery {
+                chars: 0,
+                verified: true,
+            });
         }
 
-        match self.mode {
-            InjectionMode::Synthetic => Self::type_unicode(text),
-            InjectionMode::Paste => Self::paste(text),
+        // Asked here, after the focus has been restored and before anything is
+        // posted. Earlier would be wrong: until `restore_focus` has run, the
+        // frontmost app is usually the widget, and the answer would describe
+        // our own panel rather than where the text is going.
+        //
+        // The answer never gates the injection below — see `focus` for how
+        // wrong it is about apps that draw their own text, and `Delivery` for
+        // why the asymmetry matters.
+        let focus = super::focus::focused_text_target();
+        if focus == super::focus::Focus::NotEditable {
+            tracing::info!(
+                frontmost,
+                "nothing focused looks able to take text; keeping the transcript in reach"
+            );
         }
+
+        let chars = match self.mode {
+            InjectionMode::Synthetic => Self::type_unicode(text)?,
+            InjectionMode::Paste => Self::paste(text)?,
+        };
+        Ok(Delivery {
+            chars,
+            verified: focus != super::focus::Focus::NotEditable,
+        })
     }
 
     fn blocked_by(&self) -> Option<String> {

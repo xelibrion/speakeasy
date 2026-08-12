@@ -220,6 +220,18 @@ migrates it to a local choice and drops the old field on the next save.
 - **Paste injection by default.** More reliable than synthetic key events in
   Electron apps and terminals, at the cost of clobbering the clipboard.
   Switchable via `Config::injection_mode`.
+- **A dictation is never lost silently.** Posting keystrokes says nothing about
+  whether anything read them, so `inject` returns a `Delivery` rather than a
+  character count: `verified: false` means the Accessibility API positively
+  reported nothing focused that could take text. The engine then rests in
+  `State::Unconfirmed` instead of `Idle`, which keeps the widget up with the
+  transcript and a Copy button rather than hiding it and taking the only copy.
+
+  The detection is a hint and never a veto — see `macos::focus` for the measured
+  table showing Emacs and Firefox reporting "not editable" while accepting typed
+  text perfectly well. Injection always happens; the check only decides whether
+  the transcript stays within reach. A wrong answer costs a button nobody
+  needed, never the dictation.
 - **Secure input is checked before the microphone opens.** A focused password
   field disables event taps process-wide on macOS, which makes the whole
   dictation undeliverable. `TextSink::blocked_by` is consulted in

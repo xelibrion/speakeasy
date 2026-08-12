@@ -206,6 +206,7 @@ fn status_text() -> String {
         Some(State::Transcribing) => "Transcribing…".to_string(),
         Some(State::Injecting) => "Inserting text…".to_string(),
         Some(State::Failed { error }) => format!("Error: {error}"),
+        Some(State::Unconfirmed) => "Text may not have been inserted".to_string(),
         Some(State::Idle) | None => "Ready".to_string(),
     }
 }

@@ -10,7 +10,17 @@ pub enum State {
     Recording,
     Transcribing,
     Injecting,
-    Failed { error: Error },
+    /// Keystrokes were posted, but nothing on screen looked able to receive
+    /// them. Distinct from [`State::Failed`] because it is not a failure: the
+    /// text may well have arrived, and the detection behind it is known to be
+    /// wrong about apps that draw their own text.
+    ///
+    /// Exists so the widget can stay up with the transcript in reach instead of
+    /// dropping to `Idle` and taking the only copy with it.
+    Unconfirmed,
+    Failed {
+        error: Error,
+    },
 }
 
 /// What the model subsystem is doing.

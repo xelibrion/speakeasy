@@ -10,8 +10,8 @@ use std::sync::{Arc, Mutex};
 use crate::config::Hotkey;
 use crate::error::{Error, Result};
 use crate::ports::{
-    AudioSource, CaptureCallback, HotkeyCallback, HotkeyEvent, HotkeyListener, ModelFetcher,
-    SpeechSegment, SpeechSegmenter, TextSink, Transcriber,
+    AudioSource, CaptureCallback, Delivery, HotkeyCallback, HotkeyEvent, HotkeyListener,
+    ModelFetcher, SpeechSegment, SpeechSegmenter, TextSink, Transcriber,
 };
 
 /// Returns a canned buffer from `stop`, and records whether it is capturing.
@@ -328,12 +328,26 @@ impl SpeechSegmenter for FakeSegmenter {
 }
 
 /// Records everything injected so tests can assert on it.
-#[derive(Default)]
 pub struct FakeSink {
     injected: Mutex<Vec<String>>,
     copied: Mutex<Vec<String>>,
     fail_with: Option<Error>,
     blocked_by: Option<String>,
+    /// What [`Delivery::verified`] reports. `true` by default so the ordinary
+    /// case stays the ordinary case in tests.
+    verified: bool,
+}
+
+impl Default for FakeSink {
+    fn default() -> Self {
+        Self {
+            injected: Mutex::new(Vec::new()),
+            copied: Mutex::new(Vec::new()),
+            fail_with: None,
+            blocked_by: None,
+            verified: true,
+        }
+    }
 }
 
 impl FakeSink {
@@ -352,6 +366,15 @@ impl FakeSink {
         }
     }
 
+    /// A sink whose injection succeeds but cannot confirm it landed — what the
+    /// macOS sink reports when nothing focused looks able to take text.
+    pub fn unverified() -> Self {
+        Self {
+            verified: false,
+            ..Self::default()
+        }
+    }
+
     pub fn injected(&self) -> Vec<String> {
         self.injected
             .lock()
@@ -366,7 +389,7 @@ impl FakeSink {
 }
 
 impl TextSink for FakeSink {
-    fn inject(&self, text: &str) -> Result<usize> {
+    fn inject(&self, text: &str) -> Result<Delivery> {
         if let Some(error) = &self.fail_with {
             return Err(error.clone());
         }
@@ -374,7 +397,10 @@ impl TextSink for FakeSink {
             .lock()
             .expect("injected mutex poisoned")
             .push(text.to_string());
-        Ok(text.chars().count())
+        Ok(Delivery {
+            chars: text.chars().count(),
+            verified: self.verified,
+        })
     }
 
     fn blocked_by(&self) -> Option<String> {
@@ -396,7 +422,7 @@ impl TextSink for FakeSink {
 /// So a test can hold an `Arc<FakeSink>` to assert on while the engine owns a
 /// `Box<dyn TextSink>` built from the same instance.
 impl TextSink for Arc<FakeSink> {
-    fn inject(&self, text: &str) -> Result<usize> {
+    fn inject(&self, text: &str) -> Result<Delivery> {
         self.as_ref().inject(text)
     }
 

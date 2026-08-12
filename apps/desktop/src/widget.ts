@@ -28,6 +28,9 @@ const LABELS: Record<State["state"], string> = {
   recording: "Listening…",
   transcribing: "Transcribing…",
   injecting: "Inserting…",
+  // Not "failed": the text may well have arrived. All that is certain is that
+  // nothing focused looked able to take it.
+  unconfirmed: "Couldn't confirm the text was inserted",
   failed: "Something went wrong",
 };
 
@@ -122,7 +125,7 @@ export function mountWidget(root: HTMLElement) {
    * source of truth for the one string in this app that cannot be regenerated.
    */
   async function showRescue(state: State): Promise<void> {
-    if (state.state !== "failed") {
+    if (state.state !== "failed" && state.state !== "unconfirmed") {
       rescue.hidden = true;
       return;
     }

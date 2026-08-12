@@ -153,14 +153,32 @@ pub trait HotkeyListener: Send + Sync {
     fn cancel_capture(&self);
 }
 
+/// The result of an injection that did not fail.
+///
+/// Two fields rather than a bare count because "the keystrokes were posted" and
+/// "the text arrived" are different claims, and only the first is ever certain.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Delivery {
+    pub chars: usize,
+    /// `false` only when the implementation positively established there was
+    /// nowhere for the text to land. Not knowing must report `true`.
+    ///
+    /// The asymmetry is the point. A wrong `false` costs a Copy button nobody
+    /// needed; a wrong `false` that were allowed to *withhold* text would cost
+    /// the dictation, which is why nothing may act on this by refusing to
+    /// inject. See `speakeasy-platform`'s `macos::focus` for how badly the
+    /// underlying signal behaves for apps that draw their own text.
+    pub verified: bool,
+}
+
 /// Delivers text to whatever application currently has focus.
 pub trait TextSink: Send + Sync {
-    /// Returns the number of characters delivered.
+    /// Post `text` to whatever has focus.
     ///
     /// Implementations must fail with [`crate::Error::SecureInputActive`]
     /// rather than silently dropping text when a password field has disabled
     /// event taps.
-    fn inject(&self, text: &str) -> Result<usize>;
+    fn inject(&self, text: &str) -> Result<Delivery>;
 
     /// The app blocking injection right now, by display name, or `None` if
     /// nothing is.

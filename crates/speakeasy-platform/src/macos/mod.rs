@@ -1,3 +1,4 @@
+mod focus;
 mod hotkey;
 mod keycode;
 mod secure_input;

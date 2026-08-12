@@ -252,7 +252,9 @@ impl Engine {
                     // Mid-flight work owns the key; a stray tap must not queue
                     // a second recording behind it.
                     State::Transcribing | State::Injecting => HotkeyAction::Ignore,
-                    State::Idle | State::Failed { .. } => HotkeyAction::Begin,
+                    // `Unconfirmed` alongside `Idle`: the pill lingering with a
+                    // Copy button must never be a reason the key stops working.
+                    State::Idle | State::Unconfirmed | State::Failed { .. } => HotkeyAction::Begin,
                 },
             },
         }
@@ -492,9 +494,20 @@ impl Engine {
 
         self.transition(State::Injecting);
         match self.inner.sink.inject(&text) {
-            Ok(chars) => {
-                self.emit(Event::Injected { chars });
-                self.transition(State::Idle);
+            Ok(delivery) => {
+                self.emit(Event::Injected {
+                    chars: delivery.chars,
+                });
+                // Unverified does not mean failed, and the text is not resent:
+                // it was posted either way, and posting twice into an app that
+                // did receive it would duplicate the user's words. All this
+                // changes is that the widget stays up with the transcript in
+                // reach rather than dropping to `Idle` and taking it away.
+                self.transition(if delivery.verified {
+                    State::Idle
+                } else {
+                    State::Unconfirmed
+                });
                 Ok(())
             }
             Err(err) => {
@@ -1211,6 +1224,53 @@ mod tests {
             sink.copied(),
             vec!["the paragraph I just spoke".to_string()]
         );
+    }
+
+    /// The silent case, and the reason `Unconfirmed` exists: injection reports
+    /// success because posting events always does, but nothing was focused to
+    /// receive them. Dropping to `Idle` here would hide the widget and take the
+    /// only copy of the text with it.
+    #[test]
+    fn an_unverified_injection_keeps_the_widget_up() {
+        let sink = Arc::new(FakeSink::unverified());
+        let engine = Engine::new(
+            Box::new(FakeAudio::with_samples(vec![0.0; 16_000])),
+            Arc::new(FakeTranscriber::returning("into the void")),
+            Box::new(sink.clone()),
+            Box::new(FakeFetcher::serving(Vec::new())),
+            unused_models_dir(),
+            Config {
+                min_recording_ms: 0,
+                ..Config::default()
+            },
+        );
+
+        engine.begin_recording().expect("recording should start");
+        engine
+            .finish_recording()
+            .expect("injection should not fail");
+
+        // Posted exactly once. Resending into an app that did receive it would
+        // duplicate the user's words, which is worse than the problem.
+        assert_eq!(sink.injected(), vec!["into the void".to_string()]);
+        assert_eq!(engine.state(), State::Unconfirmed);
+        assert_eq!(
+            engine.recoverable_transcript(),
+            Some("into the void".to_string())
+        );
+    }
+
+    /// The ordinary path must be untouched: a confirmed insertion still ends
+    /// with the widget gone.
+    #[test]
+    fn a_verified_injection_returns_to_idle() {
+        let (engine, sink) = engine("landed safely");
+
+        engine.begin_recording().expect("recording should start");
+        engine.finish_recording().expect("injection should work");
+
+        assert_eq!(sink.injected(), vec!["landed safely".to_string()]);
+        assert_eq!(engine.state(), State::Idle);
     }
 
     /// Copying must not be a one-shot. The user may paste into the wrong

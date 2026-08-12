@@ -14,6 +14,8 @@ export type State =
   | { state: "recording" }
   | { state: "transcribing" }
   | { state: "injecting" }
+  /** Posted, but nothing focused looked able to receive it. Not a failure. */
+  | { state: "unconfirmed" }
   | { state: "failed"; error: EngineError };
 
 /**
