@@ -1,5 +1,6 @@
 mod hotkey;
 mod keycode;
+mod secure_input;
 mod text_sink;
 
 use std::ffi::{c_void, CString};

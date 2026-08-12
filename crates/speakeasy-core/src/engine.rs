@@ -269,6 +269,15 @@ impl Engine {
             return Err(err);
         }
 
+        // Before the microphone, not after. Secure input makes the whole
+        // dictation worthless, and finding that out on release means the user
+        // has already spoken the paragraph that gets thrown away.
+        if let Some(app) = self.inner.sink.blocked_by() {
+            let err = Error::SecureInputActive(app);
+            self.fail(err.clone());
+            return Err(err);
+        }
+
         if let Err(err) = self.inner.audio.start() {
             self.fail(err.clone());
             return Err(err);
@@ -1086,7 +1095,7 @@ mod tests {
             activation: ActivationMode::Toggle,
             ..Config::default()
         });
-        engine.fail(Error::SecureInputActive);
+        engine.fail(Error::SecureInputActive("Terminal".to_string()));
 
         assert_eq!(
             engine.hotkey_action(HotkeyEvent::Pressed),
@@ -1096,7 +1105,9 @@ mod tests {
 
     #[test]
     fn injection_failure_surfaces_as_failed_state() {
-        let sink = Arc::new(FakeSink::failing(Error::SecureInputActive));
+        let sink = Arc::new(FakeSink::failing(Error::SecureInputActive(
+            "Terminal".to_string(),
+        )));
         let engine = Engine::new(
             Box::new(FakeAudio::with_samples(vec![0.0; 16_000])),
             Arc::new(FakeTranscriber::returning("hello")),
@@ -1114,13 +1125,42 @@ mod tests {
             .finish_recording()
             .expect_err("injection should fail");
 
-        assert_eq!(err, Error::SecureInputActive);
+        assert_eq!(err, Error::SecureInputActive("Terminal".to_string()));
         assert_eq!(
             engine.state(),
             State::Failed {
-                error: Error::SecureInputActive
+                error: Error::SecureInputActive("Terminal".to_string())
             }
         );
+    }
+
+    /// The point of the whole check: a blocked machine costs the user a key
+    /// press, not a paragraph they then watch disappear.
+    #[test]
+    fn recording_refuses_to_start_while_secure_input_is_held() {
+        let audio = Arc::new(FakeAudio::with_samples(vec![0.0; 16_000]));
+        let engine = Engine::new(
+            Box::new(audio.clone()),
+            Arc::new(FakeTranscriber::returning("never heard")),
+            Box::new(Arc::new(FakeSink::blocked_by("1Password"))),
+            Box::new(FakeFetcher::serving(Vec::new())),
+            unused_models_dir(),
+            Config::default(),
+        );
+
+        let events = engine.subscribe();
+        let err = engine
+            .begin_recording()
+            .expect_err("recording should be refused");
+
+        assert_eq!(err, Error::SecureInputActive("1Password".to_string()));
+        assert!(!audio.is_recording(), "the microphone should never open");
+        assert!(events.try_iter().any(|event| matches!(
+            event,
+            Event::Failed {
+                error: Error::SecureInputActive(ref app)
+            } if app == "1Password"
+        )));
     }
 
     /// Builds an engine over a real directory, so the model paths resolve.

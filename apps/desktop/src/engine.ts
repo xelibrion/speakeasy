@@ -51,6 +51,7 @@ const ERROR_LABELS: Record<ErrorKind, string> = {
   MicrophonePermissionDenied: "Microphone access denied",
   InputPermissionDenied: "Accessibility access denied",
   SecureInputActive: "A password field is blocking input",
+  // ^ the fallback only. `errorLabel` names the app when the payload has one.
   ModelNotLoaded: "No speech model loaded",
   ModelDownload: "Could not download the model",
   ModelVerification: "The download was corrupted — try again",
@@ -63,6 +64,11 @@ const ERROR_LABELS: Record<ErrorKind, string> = {
 export function errorLabel(error: EngineError): string {
   // `Other` has nothing but its payload, so prefer that when it is there.
   if (error.kind === "Other" && error.message) return error.message;
+  // The exception to the rule above: this payload is an app name, not a
+  // developer string, and naming the app is the only part the user can act on.
+  if (error.kind === "SecureInputActive" && error.message) {
+    return `${error.message} is blocking input`;
+  }
   return ERROR_LABELS[error.kind] ?? ERROR_LABELS.Other;
 }
 

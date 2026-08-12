@@ -161,4 +161,18 @@ pub trait TextSink: Send + Sync {
     /// rather than silently dropping text when a password field has disabled
     /// event taps.
     fn inject(&self, text: &str) -> Result<usize>;
+
+    /// The app blocking injection right now, by display name, or `None` if
+    /// nothing is.
+    ///
+    /// This is what lets the engine refuse to start rather than record a minute
+    /// of speech it already knows it cannot deliver. Answering it costs one
+    /// syscall, so it is checked afresh every time — secure input comes and
+    /// goes as the user moves between fields.
+    ///
+    /// Defaults to `None`: secure input is a macOS concept, and a platform
+    /// without an equivalent should not have to say so.
+    fn blocked_by(&self) -> Option<String> {
+        None
+    }
 }

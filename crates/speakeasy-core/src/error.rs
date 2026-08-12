@@ -19,8 +19,12 @@ pub enum Error {
 
     /// macOS secure input mode: a password field has globally disabled event
     /// taps, so the hotkey and text injection are both dead until it clears.
-    #[error("secure input is active; text cannot be injected right now")]
-    SecureInputActive,
+    ///
+    /// The payload names the app holding it, which is the only actionable part:
+    /// "secure input is on" tells the user nothing they can do, where "1Password
+    /// is blocking input" tells them exactly which window to leave.
+    #[error("{0} is holding secure input; text cannot be injected right now")]
+    SecureInputActive(String),
 
     #[error("no speech model loaded")]
     ModelNotLoaded,

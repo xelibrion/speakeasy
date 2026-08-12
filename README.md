@@ -220,9 +220,18 @@ migrates it to a local choice and drops the old field on the next save.
 - **Paste injection by default.** More reliable than synthetic key events in
   Electron apps and terminals, at the cost of clobbering the clipboard.
   Switchable via `Config::injection_mode`.
-- **Secure input is a first-class error.** A focused password field disables
-  event taps process-wide on macOS. `Error::SecureInputActive` exists so this
-  surfaces to the user rather than silently dropping their dictation.
+- **Secure input is checked before the microphone opens.** A focused password
+  field disables event taps process-wide on macOS, which makes the whole
+  dictation undeliverable. `TextSink::blocked_by` is consulted in
+  `begin_recording`, so the user is told immediately rather than after speaking
+  a paragraph that then has nowhere to go. It is checked again at injection
+  time, since secure input can arrive mid-dictation.
+
+  `Error::SecureInputActive` carries the name of the app holding it — read from
+  `kCGSSessionSecureInputPID` in the window server's session dictionary, which
+  is private API, so `crates/speakeasy-platform/src/macos/secure_input.rs`
+  reaches it by `dlsym` and degrades to "Another app" rather than failing. The
+  name is the only actionable part: it tells the user which window to leave.
 
 ## Getting started
 

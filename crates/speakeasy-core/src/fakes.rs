@@ -85,6 +85,30 @@ impl AudioSource for FakeAudio {
     }
 }
 
+/// So a test can hold an `Arc<FakeAudio>` and ask whether the microphone ever
+/// opened, while the engine owns a `Box<dyn AudioSource>` over the same one.
+impl AudioSource for Arc<FakeAudio> {
+    fn start(&self) -> Result<()> {
+        self.as_ref().start()
+    }
+
+    fn stop(&self) -> Result<Vec<f32>> {
+        self.as_ref().stop()
+    }
+
+    fn snapshot(&self) -> Result<Vec<f32>> {
+        self.as_ref().snapshot()
+    }
+
+    fn level(&self) -> f32 {
+        self.as_ref().level()
+    }
+
+    fn spectrum(&self) -> Vec<f32> {
+        self.as_ref().spectrum()
+    }
+}
+
 /// Returns a fixed transcript, ignoring the audio.
 pub struct FakeTranscriber {
     result: Result<String>,
@@ -308,13 +332,22 @@ impl SpeechSegmenter for FakeSegmenter {
 pub struct FakeSink {
     injected: Mutex<Vec<String>>,
     fail_with: Option<Error>,
+    blocked_by: Option<String>,
 }
 
 impl FakeSink {
     pub fn failing(error: Error) -> Self {
         Self {
-            injected: Mutex::new(Vec::new()),
             fail_with: Some(error),
+            ..Self::default()
+        }
+    }
+
+    /// A sink that reports `app` is holding secure input.
+    pub fn blocked_by(app: &str) -> Self {
+        Self {
+            blocked_by: Some(app.to_string()),
+            ..Self::default()
         }
     }
 
@@ -337,6 +370,10 @@ impl TextSink for FakeSink {
             .push(text.to_string());
         Ok(text.chars().count())
     }
+
+    fn blocked_by(&self) -> Option<String> {
+        self.blocked_by.clone()
+    }
 }
 
 /// So a test can hold an `Arc<FakeSink>` to assert on while the engine owns a
@@ -344,6 +381,10 @@ impl TextSink for FakeSink {
 impl TextSink for Arc<FakeSink> {
     fn inject(&self, text: &str) -> Result<usize> {
         self.as_ref().inject(text)
+    }
+
+    fn blocked_by(&self) -> Option<String> {
+        self.as_ref().blocked_by()
     }
 }
 

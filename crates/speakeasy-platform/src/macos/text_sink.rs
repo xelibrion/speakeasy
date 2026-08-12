@@ -24,11 +24,6 @@ const KEY_V: u16 = 9;
 /// Longest run of UTF-16 units to attach to a single synthetic key event.
 const CHUNK: usize = 20;
 
-#[link(name = "Carbon", kind = "framework")]
-extern "C" {
-    fn IsSecureEventInputEnabled() -> bool;
-}
-
 #[link(name = "AppKit", kind = "framework")]
 extern "C" {
     fn objc_getClass(name: *const u8) -> *mut c_void;
@@ -41,12 +36,6 @@ pub struct MacTextSink {
 impl MacTextSink {
     pub fn new(mode: InjectionMode) -> Self {
         Self { mode }
-    }
-
-    /// Check before every injection, not once at startup — secure input
-    /// toggles as the user moves between fields.
-    fn secure_input_active() -> bool {
-        unsafe { IsSecureEventInputEnabled() }
     }
 
     fn source() -> Result<CGEventSource> {
@@ -122,8 +111,11 @@ impl TextSink for MacTextSink {
         let (frontmost, frontmost_pid) = super::frontmost_app();
         tracing::debug!(frontmost, frontmost_pid, "injecting");
 
-        if Self::secure_input_active() {
-            return Err(Error::SecureInputActive);
+        // Checked again here, not only before recording: secure input can
+        // arrive mid-dictation, and delivering into a dead event tap loses the
+        // text silently.
+        if let Some(app) = self.blocked_by() {
+            return Err(Error::SecureInputActive(app));
         }
         if text.is_empty() {
             return Ok(0);
@@ -133,6 +125,10 @@ impl TextSink for MacTextSink {
             InjectionMode::Synthetic => Self::type_unicode(text),
             InjectionMode::Paste => Self::paste(text),
         }
+    }
+
+    fn blocked_by(&self) -> Option<String> {
+        super::secure_input::blocking_app()
     }
 }
 
