@@ -146,14 +146,24 @@ async function renderPermissions(banner: HTMLElement): Promise<void> {
 async function mountDictation(panel: HTMLElement): Promise<void> {
   const config = await getConfig();
 
-  panel.append(
+  const primary = element("div", "card");
+  primary.append(
     await hotkeyRow(config),
     toggleRow("Live preview", config.transcriptPreview, (value) => {
       void setConfig({ ...config, transcriptPreview: value });
     }),
+  );
+
+  const groupLabel = element("div", "grouplabel");
+  groupLabel.textContent = "Text insertion";
+
+  const secondary = element("div", "card");
+  secondary.append(
     row("Insertion", config.injectionMode === "paste" ? "Paste" : "Type each character"),
     row("Language", config.language ?? "Auto-detect"),
   );
+
+  panel.append(primary, groupLabel, secondary);
 
   const note = element("p", "note");
   note.textContent = "Insertion and language are not editable yet. Edit config.json to change them.";
@@ -242,7 +252,7 @@ async function mountModels(panel: HTMLElement): Promise<void> {
   ]);
 
   const state = { config, installed: new Set(installed), status };
-  const list = element("div", "models");
+  const list = element("div", "models card");
   const rows = new Map<ModelId, HTMLElement>();
 
   for (const info of catalog) {
@@ -250,7 +260,10 @@ async function mountModels(panel: HTMLElement): Promise<void> {
     rows.set(info.id, row);
     list.append(row);
   }
-  panel.append(list, localFileRow());
+
+  const localCard = element("div", "card");
+  localCard.append(localFileRow());
+  panel.append(list, localCard);
 
   const draw = (info: ModelInfo) => {
     const row = rows.get(info.id);
@@ -402,6 +415,7 @@ function toggleRow(
 
   const box = document.createElement("input");
   box.type = "checkbox";
+  box.className = "switch";
   box.checked = checked;
   box.addEventListener("change", () => onChange(box.checked));
 

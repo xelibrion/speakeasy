@@ -44,8 +44,8 @@ body {
   padding: 5px 11px;
   border: 0;
   border-radius: 6px;
-  background: var(--accent);
-  color: #fff;
+  background: AccentColor;
+  color: AccentColorText;
   font-size: 12px;
 }
 
@@ -79,12 +79,15 @@ body {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  min-width: 108px;
+  min-width: 128px;
   border-right: 1px solid color-mix(in srgb, var(--fg) 12%, transparent);
   padding-right: 12px;
 }
 
 .settings .tab {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   padding: 6px 10px;
   border-radius: 6px;
   background: transparent;
@@ -93,34 +96,113 @@ body {
   text-align: left;
 }
 
+/* Solid, not tinted: this is what System Settings' own selected sidebar row
+   looks like, and it reads clearly against a narrow, text-heavy list. */
 .settings .tab[aria-selected="true"] {
-  color: var(--fg);
-  background: color-mix(in srgb, var(--fg) 6%, transparent);
-  box-shadow: inset 2px 0 0 var(--accent);
+  color: AccentColorText;
+  background: AccentColor;
 }
 
 .panel {
   min-width: 0;
 }
 
+/* --- grouped cards ----------------------------------------------------
+   The row language every tab shares: a raised card per group of settings,
+   rows separated by a hairline instead of each owning its own border, and a
+   small uppercase label above any card that isn't a tab's only group. */
+
+.card {
+  background: color-mix(in srgb, var(--fg) 3%, var(--bg));
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 0 0 0.5px color-mix(in srgb, var(--fg) 12%, transparent);
+  margin-bottom: 12px;
+}
+
+.card > * {
+  padding: 8px 12px;
+}
+
+.card > * + * {
+  box-shadow: inset 0 0.5px 0 color-mix(in srgb, var(--fg) 10%, transparent);
+}
+
+.grouplabel {
+  margin: 14px 2px 5px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.grouplabel:first-child {
+  margin-top: 0;
+}
+
 /* --- dictation ------------------------------------------------------- */
+
+.setting {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
 
 /* This row has three children rather than two, and `space-between` would leave
    the value marooned in the middle. Pinning the label keeps the value beside
-   the button it belongs to. */
+   the button it belongs to, and the tighter gap suits three items better than
+   the two-item default. */
 .setting-block .setting .setting-label {
   margin-right: auto;
 }
 
 .setting-block .setting {
-  align-items: center;
   gap: 12px;
 }
 
 .setting-error:not(:empty) {
-  padding-bottom: 4px;
+  padding-top: 4px;
   color: var(--danger);
   font-size: 12px;
+}
+
+/* A CSS switch standing in for `NSSwitch` — the shell is a webview, so there
+   is no real one available. `AccentColor` keeps it tied to the system's own
+   accent rather than a color picked for this app. */
+.switch {
+  appearance: none;
+  flex: none;
+  width: 30px;
+  height: 18px;
+  margin: 0;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--fg) 18%, transparent);
+  position: relative;
+  cursor: pointer;
+  transition: background 120ms ease;
+}
+
+.switch::before {
+  content: "";
+  position: absolute;
+  top: 1.5px;
+  left: 1.5px;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+  transition: transform 120ms ease;
+}
+
+.switch:checked {
+  background: AccentColor;
+}
+
+.switch:checked::before {
+  transform: translateX(12px);
 }
 
 /* --- models ---------------------------------------------------------- */
@@ -130,8 +212,6 @@ body {
   grid-template-columns: 1fr auto auto;
   align-items: center;
   gap: 4px 8px;
-  padding: 10px 0;
-  border-bottom: 1px solid color-mix(in srgb, var(--fg) 8%, transparent);
 }
 
 .model-label {
@@ -158,23 +238,12 @@ body {
   width: 120px;
 }
 
-.model.local {
-  border-bottom: 0;
-}
-
 /* A local path can be long; it must not push the button off the row. */
 .model.local .model-note {
   overflow-wrap: anywhere;
 }
 
 /* --- read-only settings ---------------------------------------------- */
-
-.setting {
-  display: flex;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 6px 0;
-}
 
 .setting-label {
   color: var(--muted);
