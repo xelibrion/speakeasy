@@ -320,6 +320,20 @@ export function formatBytes(bytes: number): string {
   return `${Math.round(bytes / 1_000_000)} MB`;
 }
 
+/**
+ * "2 min ago" — coarse on purpose. History entries are at most a few hours
+ * old by the time anyone reads this, so a live-updating clock buys nothing.
+ */
+export function relativeTime(atMillis: number): string {
+  const seconds = Math.max(0, Math.round((Date.now() - atMillis) / 1000));
+  if (seconds < 5) return "just now";
+  if (seconds < 60) return `${seconds}s ago`;
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.round(minutes / 60);
+  return `${hours}h ago`;
+}
+
 /** Whether `choice` names this catalog entry. */
 export function isSelected(choice: ModelChoice, id: ModelId): boolean {
   return choice.kind === "catalog" && choice.id === id;

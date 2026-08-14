@@ -16,12 +16,15 @@ import {
   bindHotkey,
   cancelHotkeyCapture,
   cancelModelDownload,
+  clearHistory,
+  copyHistoryEntry,
   captureHotkey,
   hotkeyLabel,
   errorLabel,
   formatBytes,
   getConfig,
   setConfig,
+  getHistory,
   getInstalledModels,
   getModelCatalog,
   getModelStatus,
@@ -30,6 +33,7 @@ import {
   onEngineEvent,
   openPermissionSettings,
   permissionsGranted,
+  relativeTime,
   removeModel,
   selectModel,
   type Config,
@@ -37,6 +41,7 @@ import {
   type ModelId,
   type ModelInfo,
   type ModelStatus,
+  type Transcript,
 } from "./engine";
 
 type Tab = {
@@ -70,6 +75,12 @@ const TABS: Tab[] = [
     label: "Dictation",
     icon: `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M8 2a2 2 0 0 1 2 2v4a2 2 0 1 1-4 0V4a2 2 0 0 1 2-2Z"/><path d="M4 8a4 4 0 0 0 8 0"/><path d="M8 12v2"/></svg>`,
     mount: mountDictation,
+  },
+  {
+    id: "history",
+    label: "History",
+    icon: `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2 4h12M2 8h12M2 12h8"/></svg>`,
+    mount: mountHistory,
   },
 ];
 
@@ -403,6 +414,75 @@ function renderModel(row: HTMLElement, info: ModelInfo, state: ModelsState): voi
     button("Use", () => void selectModel({ kind: "catalog", id: info.id })),
     button("Remove", () => void removeModel(info.id), "secondary"),
   );
+}
+
+async function mountHistory(panel: HTMLElement): Promise<void> {
+  const list = element("div");
+  panel.append(list);
+
+  const draw = async () => {
+    const entries = await getHistory();
+    list.replaceChildren();
+
+    if (entries.length === 0) {
+      const empty = element("p", "note");
+      empty.textContent =
+        "Recent dictations appear here so a failed or misdirected paste is recoverable. Cleared when Speakeasy quits.";
+      list.append(empty);
+      return;
+    }
+
+    const clearRow = element("div", "history-clear");
+    clearRow.append(
+      button("Clear", () => {
+        void (async () => {
+          await clearHistory();
+          await draw();
+        })();
+      }, "secondary"),
+    );
+    list.append(clearRow);
+
+    const card = element("div", "card");
+    entries.forEach((entry, index) => card.append(historyRow(entry, index)));
+    list.append(card);
+  };
+
+  await draw();
+
+  const unlisten = await onEngineEvent((event) => {
+    if (event.type !== "historyChanged") return;
+    void draw();
+  });
+  releasePanel = unlisten;
+}
+
+function historyRow(entry: Transcript, index: number): HTMLElement {
+  const row = element("div", "history-row");
+
+  const text = element("div", "history-text");
+  text.textContent = entry.text;
+  text.title = entry.text;
+
+  const meta = element("div", "history-meta");
+  const time = element("span");
+  time.textContent = relativeTime(entry.at);
+  meta.append(time);
+
+  // Only a genuine injection failure is marked. `Unconfirmed` deliveries are
+  // recorded as delivered — see `Transcript.delivered` — because that
+  // detection is known wrong for apps that draw their own text, and this
+  // marker would cry wolf on rows that arrived fine.
+  if (!entry.delivered) {
+    const marker = element("span", "history-undelivered");
+    marker.textContent = "Not delivered";
+    meta.append(marker);
+  }
+
+  meta.append(button("Copy", () => void copyHistoryEntry(index)));
+
+  row.append(text, meta);
+  return row;
 }
 
 function button(text: string, onClick: () => void, className = ""): HTMLButtonElement {
