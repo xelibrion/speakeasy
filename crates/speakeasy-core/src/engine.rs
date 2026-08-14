@@ -591,6 +591,34 @@ impl Engine {
             .collect()
     }
 
+    /// Put the transcript at `index` — into the newest-first list from
+    /// [`Engine::history`] — on the clipboard.
+    ///
+    /// Takes an index rather than the text itself so the shell cannot put
+    /// something on the clipboard the engine never produced.
+    pub fn copy_history_entry(&self, index: usize) -> Result<()> {
+        let text = {
+            let history = self.inner.history.lock().expect("history mutex poisoned");
+            history
+                .iter()
+                .rev()
+                .nth(index)
+                .map(|transcript| transcript.text.clone())
+                .ok_or_else(|| Error::Other(format!("no history entry at index {index}")))?
+        };
+        self.inner.sink.copy(&text)
+    }
+
+    /// Empties history. Does not affect the current dictation cycle.
+    pub fn clear_history(&self) {
+        self.inner
+            .history
+            .lock()
+            .expect("history mutex poisoned")
+            .clear();
+        self.emit(Event::HistoryChanged);
+    }
+
     pub fn cancel(&self) {
         let _ = self.inner.audio.stop();
         *self
@@ -1506,6 +1534,67 @@ mod tests {
         }
 
         assert_eq!(engine.history().len(), 100);
+    }
+
+    #[test]
+    fn copy_history_entry_copies_the_right_text() {
+        let (engine, sink) = engine("said twice");
+
+        engine.begin_recording().expect("recording should start");
+        engine
+            .finish_recording()
+            .expect("first injection should work");
+        engine.begin_recording().expect("recording should start");
+        engine
+            .finish_recording()
+            .expect("second injection should work");
+
+        // history() is newest first; index 1 is the older of the two.
+        engine
+            .copy_history_entry(1)
+            .expect("copying an in-range entry should work");
+
+        assert_eq!(
+            sink.copied(),
+            vec!["said twice".to_string()],
+            "the entry at index 1 should have been copied, not the newest one"
+        );
+    }
+
+    #[test]
+    fn copy_history_entry_out_of_range_errors_rather_than_panics() {
+        let (engine, _sink) = engine("only one");
+
+        engine.begin_recording().expect("recording should start");
+        engine.finish_recording().expect("injection should work");
+
+        assert!(engine.copy_history_entry(5).is_err());
+    }
+
+    #[test]
+    fn clear_history_empties_it() {
+        let (engine, _sink) = engine("gone soon");
+
+        engine.begin_recording().expect("recording should start");
+        engine.finish_recording().expect("injection should work");
+        assert_eq!(engine.history().len(), 1);
+
+        engine.clear_history();
+
+        assert!(engine.history().is_empty());
+    }
+
+    #[test]
+    fn subscribers_see_history_changed() {
+        let (engine, _sink) = engine("noticed");
+        let events = engine.subscribe();
+
+        engine.begin_recording().expect("recording should start");
+        engine.finish_recording().expect("injection should work");
+
+        assert!(events
+            .try_iter()
+            .any(|event| matches!(event, Event::HistoryChanged)));
     }
 
     /// Regression coverage for replacing `last_transcript` with the buffer:
