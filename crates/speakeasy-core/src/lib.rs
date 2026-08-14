@@ -32,7 +32,7 @@ pub use config::{
 };
 pub use engine::{Engine, HotkeyAction};
 pub use error::{Error, Result};
-pub use event::{Event, ModelStatus, State};
+pub use event::{Event, ModelStatus, State, Transcript};
 pub use hotkey::{ChordMods, KeyCode};
 pub use models::{ModelId, ModelInfo};
 pub use ports::{

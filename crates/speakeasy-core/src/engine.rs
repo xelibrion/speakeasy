@@ -3,15 +3,16 @@
 //! Idle → Recording → Transcribing → Injecting → Idle, with any step able to
 //! fall into `Failed` and recover to `Idle` on the next press.
 
+use std::collections::VecDeque;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::time::{Instant, SystemTime};
 
 use std::path::PathBuf;
 
 use crate::config::{ActivationMode, Config, Hotkey, ModelChoice, WidgetPosition};
 use crate::error::{Error, Result};
-use crate::event::{Event, ModelStatus, State};
+use crate::event::{Event, ModelStatus, State, Transcript};
 use crate::models::catalog::{self, ModelId, ModelInfo, CATALOG};
 use crate::models::ModelManager;
 use crate::ports::{
@@ -24,6 +25,10 @@ use crate::preview::{decide, Tick};
 /// A decode costs ~0.31s on the measured hardware, so this is roughly a 20%
 /// duty cycle. A constant rather than a setting until it has been lived with.
 const PREVIEW_INTERVAL: std::time::Duration = std::time::Duration::from_millis(1500);
+
+/// How many transcripts [`Engine::history`] keeps before dropping the
+/// oldest. Transcripts are small and nobody scrolls past a hundred.
+const HISTORY_CAP: usize = 100;
 
 /// What a hotkey event means, given the activation mode and the current state.
 ///
@@ -62,13 +67,15 @@ struct Inner {
     /// detector — or a headless test — gets by doing nothing.
     segmenter: Mutex<Option<Arc<dyn SpeechSegmenter>>>,
     preview: Mutex<Preview>,
-    /// The last transcript that reached the injection step, kept so the user
-    /// can still retrieve it when delivery went wrong.
+    /// Completed transcriptions, most recent last. Capped at
+    /// [`HISTORY_CAP`] so a long-running session's memory use doesn't grow
+    /// without bound.
     ///
-    /// Held until the next recording rather than cleared on use: a transcript
-    /// that failed to arrive is the one thing in this app that cannot be
-    /// reproduced, and a Copy button that works exactly once is a trap.
-    last_transcript: Mutex<Option<String>>,
+    /// Held rather than cleared on use: a transcript that failed to arrive is
+    /// the one thing in this app that cannot be reproduced, and a Copy button
+    /// that works exactly once is a trap. Never persisted — see the design
+    /// doc's non-goals.
+    history: Mutex<VecDeque<Transcript>>,
 }
 
 /// Preview progress within one recording.
@@ -101,7 +108,7 @@ impl Engine {
             subscribers: Mutex::new(Vec::new()),
             segmenter: Mutex::new(None),
             preview: Mutex::new(Preview::default()),
-            last_transcript: Mutex::new(None),
+            history: Mutex::new(VecDeque::new()),
         });
 
         // The manager's status changes become ordinary events, so a shell
@@ -486,11 +493,14 @@ impl Engine {
         // Recorded before the attempt, not after a failure: the failure path
         // returns early in several places, and a transcript saved only on the
         // branch someone remembered is a transcript that goes missing.
-        *self
-            .inner
-            .last_transcript
-            .lock()
-            .expect("last_transcript mutex poisoned") = Some(text.clone());
+        // `delivered` starts `true` — matching the assumption injection
+        // works — and is flipped in the `Err` arm below, the one case any of
+        // this can be sure about.
+        self.push_history(Transcript {
+            text: text.clone(),
+            at: SystemTime::now(),
+            delivered: true,
+        });
 
         self.transition(State::Injecting);
         match self.inner.sink.inject(&text) {
@@ -498,6 +508,7 @@ impl Engine {
                 self.emit(Event::Injected {
                     chars: delivery.chars,
                 });
+                self.emit(Event::HistoryChanged);
                 // Unverified does not mean failed, and the text is not resent:
                 // it was posted either way, and posting twice into an app that
                 // did receive it would duplicate the user's words. All this
@@ -511,9 +522,31 @@ impl Engine {
                 Ok(())
             }
             Err(err) => {
+                self.mark_last_undelivered();
+                self.emit(Event::HistoryChanged);
                 self.fail(err.clone());
                 Err(err)
             }
+        }
+    }
+
+    /// Appends to history, dropping the oldest entry once past
+    /// [`HISTORY_CAP`].
+    fn push_history(&self, transcript: Transcript) {
+        let mut history = self.inner.history.lock().expect("history mutex poisoned");
+        history.push_back(transcript);
+        if history.len() > HISTORY_CAP {
+            history.pop_front();
+        }
+    }
+
+    /// Flips the most recently recorded entry to undelivered. Called only
+    /// from the `sink.inject` error arm, immediately after the entry for
+    /// this same dictation was pushed — so `back_mut` always finds it.
+    fn mark_last_undelivered(&self) {
+        let mut history = self.inner.history.lock().expect("history mutex poisoned");
+        if let Some(last) = history.back_mut() {
+            last.delivered = false;
         }
     }
 
@@ -526,13 +559,14 @@ impl Engine {
     /// empty string on the clipboard.
     pub fn recoverable_transcript(&self) -> Option<String> {
         self.inner
-            .last_transcript
+            .history
             .lock()
-            .expect("last_transcript mutex poisoned")
-            .clone()
+            .expect("history mutex poisoned")
+            .back()
+            .map(|transcript| transcript.text.clone())
     }
 
-    /// Put the last transcript on the clipboard. `false` if there was none.
+    /// Put the newest transcript on the clipboard. `false` if there was none.
     ///
     /// The way out when injection could not deliver: the clipboard needs
     /// nothing focused and survives secure input, so it works in every case
@@ -543,6 +577,18 @@ impl Engine {
         };
         self.inner.sink.copy(&text)?;
         Ok(true)
+    }
+
+    /// Every kept transcript, newest first.
+    pub fn history(&self) -> Vec<Transcript> {
+        self.inner
+            .history
+            .lock()
+            .expect("history mutex poisoned")
+            .iter()
+            .rev()
+            .cloned()
+            .collect()
     }
 
     pub fn cancel(&self) {
@@ -1349,6 +1395,134 @@ mod tests {
                 error: Error::SecureInputActive(ref app)
             } if app == "1Password"
         )));
+    }
+
+    #[test]
+    fn a_completed_dictation_is_recorded_as_delivered() {
+        let (engine, _sink) = engine("landed safely");
+
+        engine.begin_recording().expect("recording should start");
+        engine.finish_recording().expect("injection should work");
+
+        let history = engine.history();
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].text, "landed safely");
+        assert!(history[0].delivered);
+    }
+
+    #[test]
+    fn a_failed_injection_is_recorded_as_not_delivered() {
+        let sink = Arc::new(FakeSink::failing(Error::Injection("nope".to_string())));
+        let engine = Engine::new(
+            Box::new(FakeAudio::with_samples(vec![0.0; 16_000])),
+            Arc::new(FakeTranscriber::returning("lost words")),
+            Box::new(sink.clone()),
+            Box::new(FakeFetcher::serving(Vec::new())),
+            unused_models_dir(),
+            Config {
+                min_recording_ms: 0,
+                ..Config::default()
+            },
+        );
+
+        engine.begin_recording().expect("recording should start");
+        engine
+            .finish_recording()
+            .expect_err("injection should fail");
+
+        let history = engine.history();
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].text, "lost words");
+        assert!(!history[0].delivered);
+    }
+
+    /// `Unconfirmed` is a hint known to be wrong for apps that draw their own
+    /// text — see `6701333`. History must not treat it as a failure.
+    #[test]
+    fn an_unverified_injection_is_still_recorded_as_delivered() {
+        let sink = Arc::new(FakeSink::unverified());
+        let engine = Engine::new(
+            Box::new(FakeAudio::with_samples(vec![0.0; 16_000])),
+            Arc::new(FakeTranscriber::returning("into the void")),
+            Box::new(sink.clone()),
+            Box::new(FakeFetcher::serving(Vec::new())),
+            unused_models_dir(),
+            Config {
+                min_recording_ms: 0,
+                ..Config::default()
+            },
+        );
+
+        engine.begin_recording().expect("recording should start");
+        engine
+            .finish_recording()
+            .expect("injection should not fail");
+
+        let history = engine.history();
+        assert_eq!(history.len(), 1);
+        assert!(history[0].delivered);
+    }
+
+    #[test]
+    fn an_empty_transcript_is_not_recorded() {
+        let (engine, _sink) = engine("   ");
+
+        engine.begin_recording().expect("recording should start");
+        engine
+            .finish_recording()
+            .expect("an empty transcript is not an error");
+
+        assert!(engine.history().is_empty());
+    }
+
+    #[test]
+    fn history_returns_newest_first() {
+        let (engine, _sink) = engine("said twice");
+
+        engine.begin_recording().expect("recording should start");
+        engine
+            .finish_recording()
+            .expect("first injection should work");
+        engine.begin_recording().expect("recording should start");
+        engine
+            .finish_recording()
+            .expect("second injection should work");
+
+        let history = engine.history();
+        assert_eq!(history.len(), 2);
+        assert!(
+            history[0].at >= history[1].at,
+            "the most recently recorded entry should be first"
+        );
+    }
+
+    #[test]
+    fn history_caps_at_100_and_drops_the_oldest() {
+        let (engine, _sink) = engine("filler");
+
+        for _ in 0..105 {
+            engine.begin_recording().expect("recording should start");
+            engine.finish_recording().expect("injection should work");
+        }
+
+        assert_eq!(engine.history().len(), 100);
+    }
+
+    /// Regression coverage for replacing `last_transcript` with the buffer:
+    /// the rescue row's two methods must still describe the newest entry.
+    #[test]
+    fn recoverable_transcript_and_copy_transcript_still_track_the_newest_entry() {
+        let (engine, sink) = engine("the newest one");
+
+        engine.begin_recording().expect("recording should start");
+        engine.finish_recording().expect("injection should work");
+
+        assert_eq!(
+            engine.recoverable_transcript(),
+            Some("the newest one".to_string())
+        );
+        assert!(engine.copy_transcript().expect("copying should work"));
+        assert_eq!(sink.copied(), vec!["the newest one".to_string()]);
     }
 
     /// Builds an engine over a real directory, so the model paths resolve.

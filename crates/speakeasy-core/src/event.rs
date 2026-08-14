@@ -1,3 +1,5 @@
+use std::time::{SystemTime, UNIX_EPOCH};
+
 use crate::config::Hotkey;
 use crate::error::Error;
 use crate::models::ModelId;
@@ -60,6 +62,36 @@ pub enum ModelStatus {
     },
 }
 
+/// One completed transcription, kept so a failed or misdirected injection is
+/// recoverable. In memory only — see the design doc's non-goals for why this
+/// never touches disk.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct Transcript {
+    pub text: String,
+    /// Milliseconds since the Unix epoch, not a `SystemTime`: the shell reads
+    /// this as a plain number to build a relative time ("2 min ago"), and
+    /// serde's built-in `SystemTime` representation is a `{secs, nanos}`
+    /// struct no frontend wants to unpack.
+    #[serde(serialize_with = "serialize_millis")]
+    pub at: SystemTime,
+    /// `false` only when `sink.inject` returned `Err` — a genuine failure.
+    /// Never set for `State::Unconfirmed`: that detection is a known-wrong
+    /// hint for apps that draw their own text (see `6701333`), and badging it
+    /// here would mark rows that delivered fine.
+    pub delivered: bool,
+}
+
+fn serialize_millis<S>(time: &SystemTime, serializer: S) -> std::result::Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    let millis = time
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64;
+    serializer.serialize_u64(millis)
+}
+
 /// Everything a shell needs to render. Tauri re-emits these to the webview;
 /// a SwiftUI shell would map them onto an `@Observable` model.
 // No `Eq`: `AudioLevel` carries an f32.
@@ -119,4 +151,9 @@ pub enum Event {
     ModelStatusChanged {
         status: ModelStatus,
     },
+
+    /// History gained or lost an entry. Carries nothing — an open History
+    /// tab re-reads [`crate::Engine::history`] on receipt rather than
+    /// diffing a hundred small structs.
+    HistoryChanged,
 }
