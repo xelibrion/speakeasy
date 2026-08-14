@@ -302,8 +302,6 @@ intended approach in a `TODO`.
   editing `config.json`
 - resuming an interrupted download from where it stopped — a `.part` file is
   discarded and the retry starts over
-- transcript history (designed in
-  `docs/superpowers/specs/2026-08-11-transcript-history-design.md`, not built)
 - signing, notarization, auto-update
 
 ### Known: Accessibility is re-prompted on every launch
