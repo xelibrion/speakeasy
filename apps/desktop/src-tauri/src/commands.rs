@@ -5,7 +5,9 @@
 //! core and the SwiftUI migration gets more expensive. Treat a non-trivial
 //! command body as a review failure.
 
-use speakeasy_core::{Config, Engine, Hotkey, ModelChoice, ModelId, ModelInfo, ModelStatus, State};
+use speakeasy_core::{
+    Config, Engine, Hotkey, ModelChoice, ModelId, ModelInfo, ModelStatus, State, Transcript,
+};
 use tauri::State as TauriState;
 
 #[tauri::command]
@@ -46,6 +48,23 @@ pub fn recoverable_transcript(engine: TauriState<'_, Engine>) -> Option<String> 
 #[tauri::command]
 pub fn copy_transcript(engine: TauriState<'_, Engine>) -> Result<bool, String> {
     engine.copy_transcript().map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+pub fn history(engine: TauriState<'_, Engine>) -> Vec<Transcript> {
+    engine.history()
+}
+
+#[tauri::command]
+pub fn clear_history(engine: TauriState<'_, Engine>) {
+    engine.clear_history();
+}
+
+#[tauri::command]
+pub fn copy_history_entry(engine: TauriState<'_, Engine>, index: usize) -> Result<(), String> {
+    engine
+        .copy_history_entry(index)
+        .map_err(|err| err.to_string())
 }
 
 #[tauri::command]

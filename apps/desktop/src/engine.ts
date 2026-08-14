@@ -83,7 +83,8 @@ export type EngineEvent =
   | { type: "injected"; chars: number }
   | { type: "failed"; error: EngineError }
   | { type: "hotkeyChanged"; hotkey: Hotkey }
-  | { type: "modelStatusChanged"; status: ModelStatus };
+  | { type: "modelStatusChanged"; status: ModelStatus }
+  | { type: "historyChanged" };
 
 /** A catalog id such as `"base.en"`. See `core::models::ModelId`. */
 export type ModelId = string;
@@ -113,6 +114,17 @@ export type ModelStatus =
   | { status: "downloading"; id: ModelId; received: number; total: number }
   | { status: "ready"; label: string }
   | { status: "failed"; error: EngineError };
+
+/**
+ * One completed transcription. See `core::event::Transcript`.
+ */
+export type Transcript = {
+  text: string;
+  /** Milliseconds since the Unix epoch. */
+  at: number;
+  /** `false` only for a genuine injection failure — see `errorLabel`. */
+  delivered: boolean;
+};
 
 export type InjectionMode = "synthetic" | "paste";
 
@@ -265,6 +277,16 @@ export const getRecoverableTranscript = () => invoke<string | null>("recoverable
 
 /** Put that transcript on the clipboard. `false` if there was nothing to copy. */
 export const copyTranscript = () => invoke<boolean>("copy_transcript");
+
+/** Every kept transcript, newest first. */
+export const getHistory = () => invoke<Transcript[]>("history");
+
+/** Empties history. */
+export const clearHistory = () => invoke<void>("clear_history");
+
+/** Put the entry at `index` — into the newest-first list from `getHistory` — on the clipboard. */
+export const copyHistoryEntry = (index: number) =>
+  invoke<void>("copy_history_entry", { index });
 export const setHotkey = (hotkey: Hotkey) => invoke<void>("set_hotkey", { hotkey });
 
 /**
