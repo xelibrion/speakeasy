@@ -42,6 +42,13 @@ import {
 type Tab = {
   id: string;
   label: string;
+  /**
+   * Raw SVG markup, 16x16, single `currentColor` stroke. No icon asset
+   * pipeline exists yet, so glyphs are inline rather than imported SF
+   * Symbols; every value here is authored by us, never user input, so
+   * setting it via `innerHTML` is safe.
+   */
+  icon: string;
   mount: (panel: HTMLElement) => void | Promise<void>;
 };
 
@@ -52,8 +59,18 @@ type Tab = {
  * keeps this file from growing a branch per pane.
  */
 const TABS: Tab[] = [
-  { id: "models", label: "Models", mount: mountModels },
-  { id: "dictation", label: "Dictation", mount: mountDictation },
+  {
+    id: "models",
+    label: "Models",
+    icon: `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="2" y="2" width="5" height="5" rx="1"/><rect x="9" y="2" width="5" height="5" rx="1"/><rect x="2" y="9" width="5" height="5" rx="1"/><rect x="9" y="9" width="5" height="5" rx="1"/></svg>`,
+    mount: mountModels,
+  },
+  {
+    id: "dictation",
+    label: "Dictation",
+    icon: `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M8 2a2 2 0 0 1 2 2v4a2 2 0 1 1-4 0V4a2 2 0 0 1 2-2Z"/><path d="M4 8a4 4 0 0 0 8 0"/><path d="M8 12v2"/></svg>`,
+    mount: mountDictation,
+  },
 ];
 
 /**
@@ -90,7 +107,10 @@ export async function mountSettings(app: HTMLElement): Promise<void> {
   // drift out of step with the tab it describes.
   const entries = TABS.map((tab) => {
     const button = element("button", "tab");
-    button.textContent = tab.label;
+    button.innerHTML = tab.icon;
+    const text = document.createElement("span");
+    text.textContent = tab.label;
+    button.append(text);
     button.setAttribute("role", "tab");
     button.addEventListener("click", () => void show(tab));
     return { tab, button };

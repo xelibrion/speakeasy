@@ -103,6 +103,17 @@ body {
   background: AccentColor;
 }
 
+.settings .tab svg {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  color: var(--muted);
+}
+
+.settings .tab[aria-selected="true"] svg {
+  color: AccentColorText;
+}
+
 .panel {
   min-width: 0;
 }
