@@ -629,6 +629,22 @@ impl Engine {
         self.transition(State::Idle);
     }
 
+    /// Cancel a recording only if one is actually in progress; reports
+    /// whether it did.
+    ///
+    /// Distinct from [`Engine::cancel`], which the widget's Dismiss button
+    /// calls unconditionally from `Failed`/`Unconfirmed` — that contract must
+    /// not gain a state check. This one backs the Esc-cancel hotkey, which
+    /// only ever means "stop the recording," and the caller uses the return
+    /// value to decide whether to swallow the keystroke that triggered it.
+    pub fn cancel_recording_if_active(&self) -> bool {
+        if self.state() != State::Recording {
+            return false;
+        }
+        self.cancel();
+        true
+    }
+
     /// Every model the user could choose to download.
     pub fn catalog(&self) -> &'static [ModelInfo] {
         CATALOG.as_slice()
@@ -1216,6 +1232,49 @@ mod tests {
             engine.hotkey_action(HotkeyEvent::Pressed),
             HotkeyAction::Ignore
         );
+    }
+
+    #[test]
+    fn cancel_recording_if_active_stops_a_live_recording() {
+        let (engine, _sink) = engine("irrelevant");
+        engine.begin_recording().expect("recording should start");
+
+        let cancelled = engine.cancel_recording_if_active();
+
+        assert!(cancelled);
+        assert_eq!(engine.state(), State::Idle);
+    }
+
+    #[test]
+    fn cancel_recording_if_active_is_a_no_op_when_idle() {
+        let (engine, _sink) = engine("irrelevant");
+
+        let cancelled = engine.cancel_recording_if_active();
+
+        assert!(!cancelled);
+        assert_eq!(engine.state(), State::Idle);
+    }
+
+    #[test]
+    fn cancel_recording_if_active_is_a_no_op_outside_recording() {
+        let (engine, _sink) = engine("irrelevant");
+        let non_recording_states = [
+            State::Transcribing,
+            State::Injecting,
+            State::Unconfirmed,
+            State::Failed {
+                error: Error::Injection("nope".to_string()),
+            },
+        ];
+
+        for state in non_recording_states {
+            engine.transition(state.clone());
+
+            let cancelled = engine.cancel_recording_if_active();
+
+            assert!(!cancelled, "expected no cancel from {state:?}");
+            assert_eq!(engine.state(), state);
+        }
     }
 
     #[test]
