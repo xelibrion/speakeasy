@@ -125,6 +125,11 @@ pub enum HotkeyEvent {
 /// the implementation listens on, so it must not block.
 pub type HotkeyCallback = Box<dyn Fn(HotkeyEvent) + Send + Sync>;
 
+/// Invoked on a bare Escape keydown while a cancellable state is active.
+/// Returns whether it consumed the event — the listener swallows the key
+/// (and its matching key-up) only when this returns `true`.
+pub type CancelCallback = Box<dyn Fn() -> bool + Send + Sync>;
+
 /// Invoked once with whatever the user pressed, after which the capture
 /// disarms itself.
 pub type CaptureCallback = Box<dyn Fn(Hotkey) + Send + Sync>;
@@ -134,9 +139,20 @@ pub trait HotkeyListener: Send + Sync {
     /// Register `hotkey` and invoke `on_event` for press and release.
     /// Replaces any previously registered binding.
     ///
+    /// `on_cancel` is invoked separately, on a bare (unmodified) Escape
+    /// keydown, so a recording can be cancelled with the keyboard even
+    /// though `hotkey` itself is untouched. It is unrelated to `hotkey`
+    /// except when `hotkey` is itself Escape-based, in which case an
+    /// implementation must prefer `hotkey` and never call `on_cancel`.
+    ///
     /// Implementations need not support every [`Hotkey`] shape; an unsupported
     /// one must fail with [`crate::Error::Hotkey`] rather than bind nothing.
-    fn register(&self, hotkey: &Hotkey, on_event: HotkeyCallback) -> Result<()>;
+    fn register(
+        &self,
+        hotkey: &Hotkey,
+        on_event: HotkeyCallback,
+        on_cancel: CancelCallback,
+    ) -> Result<()>;
 
     fn unregister(&self) -> Result<()>;
 

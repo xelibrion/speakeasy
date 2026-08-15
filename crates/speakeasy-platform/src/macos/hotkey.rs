@@ -52,10 +52,10 @@ use core_graphics::event::{
     CGEvent, CGEventFlags, CGEventTap, CGEventTapLocation, CGEventTapOptions, CGEventTapPlacement,
     CGEventTapProxy, CGEventType, EventField,
 };
-use speakeasy_core::hotkey::{CaptureRecognizer, ChordMods, RawEventKind, RawKeyEvent};
+use speakeasy_core::hotkey::{CaptureRecognizer, ChordMods, KeyCode, RawEventKind, RawKeyEvent};
 use speakeasy_core::{
-    CaptureCallback, Error, Hotkey, HotkeyCallback, HotkeyEvent, HotkeyListener, ModifierKey,
-    Result,
+    CancelCallback, CaptureCallback, Error, Hotkey, HotkeyCallback, HotkeyEvent, HotkeyListener,
+    ModifierKey, Result,
 };
 
 use super::keycode;
@@ -242,7 +242,12 @@ impl MacHotkeys {
 }
 
 impl HotkeyListener for MacHotkeys {
-    fn register(&self, hotkey: &Hotkey, on_event: HotkeyCallback) -> Result<()> {
+    fn register(
+        &self,
+        hotkey: &Hotkey,
+        on_event: HotkeyCallback,
+        on_cancel: CancelCallback,
+    ) -> Result<()> {
         self.unregister()?;
 
         let hotkey = hotkey.clone();
@@ -255,6 +260,15 @@ impl HotkeyListener for MacHotkeys {
         // statelessness safe: a held key repeats, and only a transition fires.
         let is_down = Arc::new(AtomicBool::new(false));
 
+        // If the user's own binding is Escape-based, it wins outright: Esc
+        // never also means cancel while that binding is live.
+        let hotkey_claims_escape = matches!(hotkey, Hotkey::Chord { key: KeyCode::Escape, .. });
+        let on_cancel = Arc::new(on_cancel);
+        // Tracks a swallowed Escape keydown through to its keyup, so the
+        // up-stroke doesn't leak to whatever app is focused once the down-
+        // stroke has already been consumed.
+        let escape_swallowed = Arc::new(AtomicBool::new(false));
+
         // The callback cannot hold the tap that owns it, so the mach port is
         // published here once the tap exists and read back when macOS disables
         // it. A `usize` because the raw pointer is not `Send`, and only the
@@ -262,6 +276,8 @@ impl HotkeyListener for MacHotkeys {
         let port: Arc<Mutex<Option<usize>>> = Arc::new(Mutex::new(None));
         let port_for_callback = Arc::clone(&port);
         let capture = Arc::clone(&self.capture);
+        let on_cancel_for_callback = Arc::clone(&on_cancel);
+        let escape_swallowed_for_callback = Arc::clone(&escape_swallowed);
 
         // The tap must be created on the thread that runs the loop, so report
         // success or failure back to this one.
@@ -332,6 +348,31 @@ impl HotkeyListener for MacHotkeys {
                                 event.set_type(CGEventType::Null);
                             }
                             return None;
+                        }
+
+                        // A bare Escape is handled independently of the bound
+                        // hotkey, unless the bound hotkey is itself
+                        // Escape-based — that binding always wins.
+                        if !hotkey_claims_escape && raw.key == Some(KeyCode::Escape) {
+                            match event_type {
+                                CGEventType::KeyDown if raw.mods.is_empty() => {
+                                    let consumed = on_cancel_for_callback();
+                                    escape_swallowed_for_callback
+                                        .store(consumed, Ordering::SeqCst);
+                                    if consumed {
+                                        event.set_type(CGEventType::Null);
+                                    }
+                                    return None;
+                                }
+                                CGEventType::KeyUp
+                                    if escape_swallowed_for_callback
+                                        .swap(false, Ordering::SeqCst) =>
+                                {
+                                    event.set_type(CGEventType::Null);
+                                    return None;
+                                }
+                                _ => {}
+                            }
                         }
 
                         let edge = speakeasy_core::hotkey::match_event(&hotkey, raw)?;

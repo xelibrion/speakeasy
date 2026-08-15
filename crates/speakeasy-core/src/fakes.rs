@@ -10,8 +10,8 @@ use std::sync::{Arc, Mutex};
 use crate::config::Hotkey;
 use crate::error::{Error, Result};
 use crate::ports::{
-    AudioSource, CaptureCallback, Delivery, HotkeyCallback, HotkeyEvent, HotkeyListener,
-    ModelFetcher, SpeechSegment, SpeechSegmenter, TextSink, Transcriber,
+    AudioSource, CancelCallback, CaptureCallback, Delivery, HotkeyCallback, HotkeyEvent,
+    HotkeyListener, ModelFetcher, SpeechSegment, SpeechSegmenter, TextSink, Transcriber,
 };
 
 /// Returns a canned buffer from `stop`, and records whether it is capturing.
@@ -439,6 +439,7 @@ impl TextSink for Arc<FakeSink> {
 #[derive(Default)]
 pub struct FakeHotkeys {
     callback: Mutex<Option<HotkeyCallback>>,
+    on_cancel: Mutex<Option<CancelCallback>>,
     bound: Mutex<Option<Hotkey>>,
     capturing: Mutex<Option<CaptureCallback>>,
 }
@@ -454,6 +455,17 @@ impl FakeHotkeys {
         {
             callback(event);
         }
+    }
+
+    /// Simulate a bare Escape keydown. Reports `false`, same as no key having
+    /// been pressed, if nothing has registered a cancel callback yet.
+    pub fn fire_cancel(&self) -> bool {
+        self.on_cancel
+            .lock()
+            .expect("on_cancel mutex poisoned")
+            .as_ref()
+            .map(|on_cancel| on_cancel())
+            .unwrap_or(false)
     }
 
     /// What is currently bound, if anything.
@@ -485,15 +497,22 @@ impl FakeHotkeys {
 }
 
 impl HotkeyListener for FakeHotkeys {
-    fn register(&self, hotkey: &Hotkey, on_event: HotkeyCallback) -> Result<()> {
+    fn register(
+        &self,
+        hotkey: &Hotkey,
+        on_event: HotkeyCallback,
+        on_cancel: CancelCallback,
+    ) -> Result<()> {
         *self.bound.lock().expect("bound mutex poisoned") = Some(hotkey.clone());
         *self.callback.lock().expect("callback mutex poisoned") = Some(on_event);
+        *self.on_cancel.lock().expect("on_cancel mutex poisoned") = Some(on_cancel);
         Ok(())
     }
 
     fn unregister(&self) -> Result<()> {
         *self.bound.lock().expect("bound mutex poisoned") = None;
         *self.callback.lock().expect("callback mutex poisoned") = None;
+        *self.on_cancel.lock().expect("on_cancel mutex poisoned") = None;
         Ok(())
     }
 
@@ -508,8 +527,13 @@ impl HotkeyListener for FakeHotkeys {
 }
 
 impl HotkeyListener for Arc<FakeHotkeys> {
-    fn register(&self, hotkey: &Hotkey, on_event: HotkeyCallback) -> Result<()> {
-        self.as_ref().register(hotkey, on_event)
+    fn register(
+        &self,
+        hotkey: &Hotkey,
+        on_event: HotkeyCallback,
+        on_cancel: CancelCallback,
+    ) -> Result<()> {
+        self.as_ref().register(hotkey, on_event, on_cancel)
     }
 
     fn unregister(&self) -> Result<()> {
@@ -605,5 +629,22 @@ mod tests {
         hotkeys.finish_capture(Hotkey::default());
 
         assert_eq!(*captured.lock().expect("captured mutex poisoned"), None);
+    }
+
+    #[test]
+    fn firing_cancel_invokes_whatever_on_cancel_was_registered() {
+        let hotkeys = FakeHotkeys::default();
+        hotkeys
+            .register(&Hotkey::default(), Box::new(|_| {}), Box::new(|| true))
+            .expect("register succeeds");
+
+        assert!(hotkeys.fire_cancel());
+    }
+
+    #[test]
+    fn firing_cancel_with_nothing_registered_reports_false() {
+        let hotkeys = FakeHotkeys::default();
+
+        assert!(!hotkeys.fire_cancel());
     }
 }

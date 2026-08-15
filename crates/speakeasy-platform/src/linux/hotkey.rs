@@ -7,7 +7,9 @@
 //!
 //! Wayland is out of scope; see the README.
 
-use speakeasy_core::{CaptureCallback, Error, Hotkey, HotkeyCallback, HotkeyListener, Result};
+use speakeasy_core::{
+    CancelCallback, CaptureCallback, Error, Hotkey, HotkeyCallback, HotkeyListener, Result,
+};
 
 #[derive(Default)]
 pub struct X11Hotkeys;
@@ -19,7 +21,12 @@ impl X11Hotkeys {
 }
 
 impl HotkeyListener for X11Hotkeys {
-    fn register(&self, hotkey: &Hotkey, _on_event: HotkeyCallback) -> Result<()> {
+    fn register(
+        &self,
+        hotkey: &Hotkey,
+        _on_event: HotkeyCallback,
+        _on_cancel: CancelCallback,
+    ) -> Result<()> {
         // TODO: open an x11rb connection, XISelectEvents for raw key press and
         // release on the root window, and map ModifierKey to the keycodes for
         // Alt_L/Alt_R/Control_L/... via the keyboard mapping.
