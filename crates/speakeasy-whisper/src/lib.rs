@@ -118,6 +118,12 @@ impl Transcriber for WhisperTranscriber {
             let piece = segment.to_str_lossy().map_err(|err| {
                 Error::Transcription(format!("could not read segment {i}: {err}"))
             })?;
+            // whisper.cpp hallucinates this tag for a segment that is actually
+            // silence — most often trailing padding after real speech, not
+            // spoken content — so it must never reach injection.
+            if is_blank_audio_marker(&piece) {
+                continue;
+            }
             text.push_str(&piece);
         }
 
@@ -147,5 +153,58 @@ impl Transcriber for WhisperTranscriber {
         let context = Self::open(path)?;
         *self.context.lock().expect("whisper context mutex poisoned") = Some(context);
         Ok(())
+    }
+}
+
+/// Whether a segment is *entirely* whisper.cpp's blank-audio tag — `true` for
+/// `[BLANK_AUDIO]`, `[BLANK AUDIO]`, `(blank audio)`, and case/spacing/
+/// underscore variants of those, `false` for anything else, including real
+/// speech that happens to mention the tag in passing.
+fn is_blank_audio_marker(segment: &str) -> bool {
+    let trimmed = segment.trim();
+    let inner = trimmed
+        .strip_prefix('[')
+        .and_then(|s| s.strip_suffix(']'))
+        .or_else(|| trimmed.strip_prefix('(').and_then(|s| s.strip_suffix(')')));
+    let Some(inner) = inner else {
+        return false;
+    };
+
+    let normalized: String = inner
+        .chars()
+        .filter(|c| !c.is_whitespace() && *c != '_')
+        .flat_map(|c| c.to_lowercase())
+        .collect();
+    normalized == "blankaudio"
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn recognizes_blank_audio_markers_in_their_common_spellings() {
+        for marker in [
+            "[BLANK_AUDIO]",
+            "[BLANK AUDIO]",
+            "(blank audio)",
+            "[ Blank_Audio ]",
+            "[blankaudio]",
+        ] {
+            assert!(is_blank_audio_marker(marker), "expected a match: {marker}");
+        }
+    }
+
+    #[test]
+    fn does_not_match_real_speech() {
+        for text in [
+            "hello there",
+            "",
+            "say [BLANK_AUDIO] out loud",
+            "[BLANK_AUDIO] but then I kept talking",
+            "[MUSIC]",
+        ] {
+            assert!(!is_blank_audio_marker(text), "unexpected match: {text}");
+        }
     }
 }
