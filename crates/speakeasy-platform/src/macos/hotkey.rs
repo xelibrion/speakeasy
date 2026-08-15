@@ -262,7 +262,13 @@ impl HotkeyListener for MacHotkeys {
 
         // If the user's own binding is Escape-based, it wins outright: Esc
         // never also means cancel while that binding is live.
-        let hotkey_claims_escape = matches!(hotkey, Hotkey::Chord { key: KeyCode::Escape, .. });
+        let hotkey_claims_escape = matches!(
+            hotkey,
+            Hotkey::Chord {
+                key: KeyCode::Escape,
+                ..
+            }
+        );
         let on_cancel = Arc::new(on_cancel);
         // Tracks a swallowed Escape keydown through to its keyup, so the
         // up-stroke doesn't leak to whatever app is focused once the down-
@@ -357,8 +363,7 @@ impl HotkeyListener for MacHotkeys {
                             match event_type {
                                 CGEventType::KeyDown if raw.mods.is_empty() => {
                                     let consumed = on_cancel_for_callback();
-                                    escape_swallowed_for_callback
-                                        .store(consumed, Ordering::SeqCst);
+                                    escape_swallowed_for_callback.store(consumed, Ordering::SeqCst);
                                     if consumed {
                                         event.set_type(CGEventType::Null);
                                     }

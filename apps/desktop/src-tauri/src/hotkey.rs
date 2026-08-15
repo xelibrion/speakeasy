@@ -64,6 +64,7 @@ pub fn cancel_capture() {
 pub fn register(engine: Engine, hotkey: &Hotkey) -> Result<(), Box<dyn std::error::Error>> {
     let listener = listener();
 
+    let cancel_engine = engine.clone();
     listener.register(
         hotkey,
         Box::new(move |event| match engine.hotkey_action(event) {
@@ -84,6 +85,7 @@ pub fn register(engine: Engine, hotkey: &Hotkey) -> Result<(), Box<dyn std::erro
             }
             HotkeyAction::Ignore => {}
         }),
+        Box::new(move || cancel_engine.cancel_recording_if_active()),
     )?;
 
     BOUND.store(true, Ordering::SeqCst);
