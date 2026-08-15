@@ -321,11 +321,9 @@ async function mountModels(panel: HTMLElement): Promise<void> {
     const note = element("div", "model-note");
     note.textContent =
       state.config.model.kind === "local" ? state.config.model.path : "A ggml .bin you already have";
-    row.append(label, note);
 
-    const button = element("button");
-    button.textContent = "Choose…";
-    button.addEventListener("click", () => {
+    const actions = element("div", "model-actions");
+    const choose = button("Choose…", () => {
       void (async () => {
         const picked = await open({
           multiple: false,
@@ -338,9 +336,10 @@ async function mountModels(panel: HTMLElement): Promise<void> {
         note.textContent = picked;
         catalog.forEach(draw);
       })();
-    });
+    }, "outline");
+    actions.append(choose);
 
-    row.append(button);
+    row.append(label, note, actions);
     return row;
   }
 }
@@ -373,12 +372,12 @@ function renderModel(row: HTMLElement, info: ModelInfo, state: ModelsState): voi
   row.replaceChildren();
 
   const label = element("div", "model-label");
-  label.textContent = info.englishOnly ? info.label : `${info.label} · multilingual`;
+  label.textContent = modelLabel(info);
 
   const note = element("div", "model-note");
   note.textContent = `${info.note} · ${formatBytes(info.bytes)}`;
 
-  row.append(label, note);
+  const actions = element("div", "model-actions");
 
   const downloading = state.status.status === "downloading" && state.status.id === info.id;
   const failed = state.status.status === "failed" && isSelected(state.config.model, info.id);
@@ -387,33 +386,56 @@ function renderModel(row: HTMLElement, info: ModelInfo, state: ModelsState): voi
     const bar = document.createElement("progress");
     bar.max = state.status.total || 1;
     bar.value = state.status.received;
-    row.append(bar, button("Cancel", () => void cancelModelDownload()));
+    // Cancel is a way out, not the row's goal, so it stays visually quiet next
+    // to the progress bar rather than competing with it.
+    actions.append(bar, button("Cancel", () => void cancelModelDownload(), "ghost"));
+    row.append(label, note, actions);
     return;
   }
 
   if (failed && state.status.status === "failed") {
     const problem = element("div", "model-error");
     problem.textContent = errorLabel(state.status.error);
-    row.append(problem, button("Retry", () => void installModel(info.id)));
+    // Same tier as Download: retrying is another attempt to fetch, not the
+    // more consequential act of switching the active model.
+    actions.append(button("Retry", () => void installModel(info.id), "outline"));
+    row.append(label, problem, actions);
     return;
   }
 
   if (!state.installed.has(info.id)) {
-    row.append(button("Download", () => void installModel(info.id)));
+    // Outlined rather than solid: fetching a model onto disk does not change
+    // what Speakeasy is using yet, so it should not look as weighty as `Use`.
+    actions.append(button("Download", () => void installModel(info.id), "outline"));
+    row.append(label, note, actions);
     return;
   }
 
   if (isSelected(state.config.model, info.id)) {
     const inUse = button("In use", () => {});
     inUse.disabled = true;
-    row.append(inUse);
+    actions.append(inUse);
+    row.append(label, note, actions);
     return;
   }
 
-  row.append(
+  // Stacked rather than side by side: the CTA and its destructive secondary
+  // read as two competing buttons when they sit shoulder to shoulder, and
+  // stacking makes the size/weight difference between them the thing that
+  // separates them instead.
+  actions.classList.add("stacked");
+  actions.append(
+    // The row's one real CTA: switches what Speakeasy transcribes with.
     button("Use", () => void selectModel({ kind: "catalog", id: info.id })),
     button("Remove", () => void removeModel(info.id), "secondary"),
   );
+  row.append(label, note, actions);
+}
+
+/** "Small (multilingual)" already says it; do not also append "· multilingual". */
+function modelLabel(info: ModelInfo): string {
+  if (info.englishOnly) return info.label;
+  return info.label.toLowerCase().includes("multilingual") ? info.label : `${info.label} · multilingual`;
 }
 
 async function mountHistory(panel: HTMLElement): Promise<void> {

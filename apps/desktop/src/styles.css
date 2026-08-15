@@ -45,7 +45,11 @@ body {
   border: 0;
   border-radius: 6px;
   background: AccentColor;
-  color: AccentColorText;
+  /* Not `AccentColorText`: WKWebView does not reliably compute a contrasting
+     color for it and falls back to black, which reads as broken on the blue
+     fill. The system accent stays saturated enough in both themes that white
+     is always the right contrast, so there is nothing to compute. */
+  color: #fff;
   font-size: 12px;
 }
 
@@ -54,9 +58,27 @@ body {
   color: var(--muted);
 }
 
+/* The destructive secondary: text-only, no fill, so it never competes with a
+   row's actual CTA. */
 .settings button.secondary {
   background: transparent;
   color: var(--danger);
+}
+
+/* A CTA that has not been committed to yet — fetching a model, or retrying a
+   fetch, changes nothing about what Speakeasy is using until it finishes, so
+   it reads lighter than the solid button that does. */
+.settings button.outline {
+  background: transparent;
+  color: AccentColor;
+  box-shadow: inset 0 0 0 1px AccentColor;
+}
+
+/* The quietest tier: backing out of something in progress, not a choice
+   between options. */
+.settings button.ghost {
+  background: transparent;
+  color: var(--muted);
 }
 
 /* Only present when a permission is missing, so it must read as a problem
@@ -97,9 +119,11 @@ body {
 }
 
 /* Solid, not tinted: this is what System Settings' own selected sidebar row
-   looks like, and it reads clearly against a narrow, text-heavy list. */
+   looks like, and it reads clearly against a narrow, text-heavy list.
+   `#fff`, not `AccentColorText`: see the button rule above — WKWebView does
+   not compute it reliably and falls back to black on the blue fill. */
 .settings .tab[aria-selected="true"] {
-  color: AccentColorText;
+  color: #fff;
   background: AccentColor;
 }
 
@@ -111,7 +135,7 @@ body {
 }
 
 .settings .tab[aria-selected="true"] svg {
-  color: AccentColorText;
+  color: #fff;
 }
 
 .panel {
@@ -218,11 +242,17 @@ body {
 
 /* --- models ---------------------------------------------------------- */
 
+/* A floor, not a cap: a one-line label and note settle at this height, but a
+   longer description is still free to wrap and grow the row. Without it, a
+   row's height — and so its button's vertical position — swings on however
+   much that model's description happens to wrap, and the list reads as
+   uneven rather than as one steady rhythm. */
 .model {
   display: grid;
-  grid-template-columns: 1fr auto auto;
+  grid-template-columns: 1fr auto;
   align-items: center;
-  gap: 4px 8px;
+  gap: 4px 12px;
+  min-height: 52px;
 }
 
 .model-label {
@@ -244,15 +274,31 @@ body {
   font-size: 12px;
 }
 
-/* Every trailing control spans both rows, so it centers against the full
-   label+note block instead of sitting high, aligned with just the label. */
-.model > button,
-.model > progress {
+/* Every row's controls live in one cluster, spanning both text rows so it
+   centers against the full label+note block. A dedicated flex container
+   (rather than more grid columns) is what lets a two-button row give its
+   buttons real breathing room without that gap also stretching the space
+   between the text and a single-button row's one control. */
+.model-actions {
+  grid-column: 2;
   grid-row: 1 / span 2;
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 
-.model progress {
+.model-actions progress {
   width: 120px;
+}
+
+/* Use + Remove: stacked instead of side by side, so the CTA and its
+   destructive secondary read as two tiers of one control rather than two
+   buttons competing for the same glance. Right-aligned, matching every other
+   row's controls. */
+.model-actions.stacked {
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
 }
 
 /* A local path can be long; it must not push the button off the row. */
