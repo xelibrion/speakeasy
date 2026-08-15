@@ -244,8 +244,14 @@ body {
   font-size: 12px;
 }
 
-.model progress {
+/* Every trailing control spans both rows, so it centers against the full
+   label+note block instead of sitting high, aligned with just the label. */
+.model > button,
+.model > progress {
   grid-row: 1 / span 2;
+}
+
+.model progress {
   width: 120px;
 }
 
