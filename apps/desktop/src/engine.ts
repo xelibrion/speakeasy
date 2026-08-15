@@ -256,7 +256,14 @@ export function activationLabel(config: Config): string {
  */
 export function stopHint(config: Config): string {
   const key = hotkeyLabel(config.hotkey);
-  return config.activation === "toggle" ? `Tap ${key} to stop` : `Release ${key} to insert`;
+  const base = config.activation === "toggle" ? `Tap ${key} to stop` : `Release ${key} to insert`;
+
+  // If the activation hotkey is itself Escape-based, Esc already means
+  // something else while recording — see the matching precedence rule in
+  // `speakeasy-platform`'s macOS hotkey tap. Mentioning cancel here too
+  // would describe a binding that isn't actually live.
+  const hotkeyIsEscape = config.hotkey.kind === "chord" && config.hotkey.key === "escape";
+  return hotkeyIsEscape ? base : `${base} · Esc to cancel`;
 }
 
 /** Bands in `getAudioSpectrum`. Mirrors `core::SPECTRUM_BANDS`. */
