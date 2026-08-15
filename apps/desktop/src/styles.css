@@ -301,6 +301,14 @@ body {
   gap: 4px;
 }
 
+/* Remove has no visible box, so the same right padding every button carries
+   reads as an unexplained gap past the word instead of space inside a
+   boundary. Trimmed here, not on `.secondary` generally, since Clear (in
+   History) is a standalone button whose hit-area padding should stay. */
+.model-actions.stacked button.secondary {
+  padding-right: 0;
+}
+
 /* A local path can be long; it must not push the button off the row. */
 .model.local .model-note {
   overflow-wrap: anywhere;
