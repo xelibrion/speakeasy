@@ -65,12 +65,6 @@ type Tab = {
  */
 const TABS: Tab[] = [
   {
-    id: "models",
-    label: "Models",
-    icon: `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="2" y="2" width="5" height="5" rx="1"/><rect x="9" y="2" width="5" height="5" rx="1"/><rect x="2" y="9" width="5" height="5" rx="1"/><rect x="9" y="9" width="5" height="5" rx="1"/></svg>`,
-    mount: mountModels,
-  },
-  {
     id: "dictation",
     label: "Dictation",
     icon: `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M8 2a2 2 0 0 1 2 2v4a2 2 0 1 1-4 0V4a2 2 0 0 1 2-2Z"/><path d="M4 8a4 4 0 0 0 8 0"/><path d="M8 12v2"/></svg>`,
@@ -81,6 +75,12 @@ const TABS: Tab[] = [
     label: "History",
     icon: `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2 4h12M2 8h12M2 12h8"/></svg>`,
     mount: mountHistory,
+  },
+  {
+    id: "models",
+    label: "Models",
+    icon: `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="2" y="2" width="5" height="5" rx="1"/><rect x="9" y="2" width="5" height="5" rx="1"/><rect x="2" y="9" width="5" height="5" rx="1"/><rect x="9" y="9" width="5" height="5" rx="1"/></svg>`,
+    mount: mountModels,
   },
 ];
 
