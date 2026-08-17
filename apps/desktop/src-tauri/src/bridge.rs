@@ -65,9 +65,26 @@ pub fn forward_events(app: AppHandle, engine: Engine) {
             // window. Re-registering here rather than in the command is what
             // keeps a rebinding from settings and one from a capture on the
             // same path.
-            if let Event::HotkeyChanged { hotkey } = &event {
-                if let Err(err) = crate::hotkey::register(engine.clone(), hotkey) {
-                    tracing::warn!(%err, "could not bind the new hotkey");
+            //
+            // Only when `bucket` is the one currently active: a rebind of
+            // the *other* row in Settings must not tear down the tap that is
+            // actually working right now.
+            if let Event::HotkeyChanged { bucket, hotkey } = &event {
+                if *bucket == engine.active_bucket() {
+                    if let Err(err) = crate::hotkey::register(engine.clone(), hotkey) {
+                        tracing::warn!(%err, "could not bind the new hotkey");
+                    }
+                }
+            }
+
+            // The set of attached keyboards changed enough to flip the
+            // bucket. This is what actually performs the swap-the-tap
+            // behavior; `Engine::set_active_bucket` itself only records the
+            // fact.
+            if let Event::ActiveBucketChanged { bucket } = &event {
+                let hotkey = engine.config().hotkeys.get(*bucket).clone();
+                if let Err(err) = crate::hotkey::register(engine.clone(), &hotkey) {
+                    tracing::warn!(%err, "could not bind the hotkey for the new keyboard");
                 }
             }
 
