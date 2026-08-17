@@ -82,7 +82,8 @@ export type EngineEvent =
   | { type: "transcriptPreview"; text: string }
   | { type: "injected"; chars: number }
   | { type: "failed"; error: EngineError }
-  | { type: "hotkeyChanged"; hotkey: Hotkey }
+  | { type: "hotkeyChanged"; bucket: KeyboardBucket; hotkey: Hotkey }
+  | { type: "activeBucketChanged"; bucket: KeyboardBucket }
   | { type: "modelStatusChanged"; status: ModelStatus }
   | { type: "historyChanged" };
 
@@ -158,11 +159,14 @@ export type Hotkey =
 /** Hold the key, or tap it twice. See `core::config::ActivationMode`. */
 export type ActivationMode = "pushToTalk" | "toggle";
 
+/** Which physical keyboard is driving the binding. See `core::config::KeyboardBucket`. */
+export type KeyboardBucket = "builtIn" | "external";
+
 /** Physical screen pixels. See `core::config::WidgetPosition`. */
 export type WidgetPosition = { x: number; y: number };
 
 export type Config = {
-  hotkey: Hotkey;
+  hotkeys: { builtIn: Hotkey; external: Hotkey };
   activation: ActivationMode;
   model: ModelChoice;
   language: string | null;
@@ -242,9 +246,9 @@ export function hotkeyLabel(hotkey: Hotkey): string {
 }
 
 /** How to describe the binding to the user, mode included. */
-export function activationLabel(config: Config): string {
-  const key = hotkeyLabel(config.hotkey);
-  return config.activation === "toggle" ? `tap ${key} to start and stop` : `hold ${key} to talk`;
+export function activationLabel(hotkey: Hotkey, activation: ActivationMode): string {
+  const key = hotkeyLabel(hotkey);
+  return activation === "toggle" ? `tap ${key} to start and stop` : `hold ${key} to talk`;
 }
 
 /**
@@ -254,15 +258,15 @@ export function activationLabel(config: Config): string {
  * how to make it stop. Hold mode gets the matching line for symmetry, though
  * there the answer is already in the user's fingers.
  */
-export function stopHint(config: Config): string {
-  const key = hotkeyLabel(config.hotkey);
-  const base = config.activation === "toggle" ? `Tap ${key} to stop` : `Release ${key} to insert`;
+export function stopHint(hotkey: Hotkey, activation: ActivationMode): string {
+  const key = hotkeyLabel(hotkey);
+  const base = activation === "toggle" ? `Tap ${key} to stop` : `Release ${key} to insert`;
 
   // If the activation hotkey is itself Escape-based, Esc already means
   // something else while recording — see the matching precedence rule in
   // `speakeasy-platform`'s macOS hotkey tap. Mentioning cancel here too
   // would describe a binding that isn't actually live.
-  const hotkeyIsEscape = config.hotkey.kind === "chord" && config.hotkey.key === "escape";
+  const hotkeyIsEscape = hotkey.kind === "chord" && hotkey.key === "escape";
   return hotkeyIsEscape ? base : `${base} · Esc to cancel`;
 }
 
@@ -294,7 +298,11 @@ export const clearHistory = () => invoke<void>("clear_history");
 /** Put the entry at `index` — into the newest-first list from `getHistory` — on the clipboard. */
 export const copyHistoryEntry = (index: number) =>
   invoke<void>("copy_history_entry", { index });
-export const setHotkey = (hotkey: Hotkey) => invoke<void>("set_hotkey", { hotkey });
+export const setHotkey = (bucket: KeyboardBucket, hotkey: Hotkey) =>
+  invoke<void>("set_hotkey", { bucket, hotkey });
+
+/** Which keyboard bucket is driving the binding right now. */
+export const activeKeyboardBucket = () => invoke<KeyboardBucket>("active_keyboard_bucket");
 
 /**
  * Arms the keyboard and returns; it does not resolve with the key.
