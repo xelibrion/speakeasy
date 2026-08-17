@@ -155,8 +155,16 @@ fn main() {
             // A failure here is usually a missing Accessibility grant. Log it
             // and keep running: the tray still works, and the settings window
             // is where the user is told what to fix.
-            if let Err(err) = hotkey::register(engine.clone(), &config.hotkey) {
+            // Bound synchronously against the built-in binding first, so
+            // dictation works immediately even if the keyboard watcher below
+            // is slow to report in; its first callback corrects this to
+            // External if a PC keyboard is already attached at launch.
+            let starting_hotkey = config.hotkeys.get(engine.active_bucket()).clone();
+            if let Err(err) = hotkey::register(engine.clone(), &starting_hotkey) {
                 tracing::warn!(%err, "push-to-talk is not bound");
+            }
+            if let Err(err) = hotkey::watch_keyboard(engine.clone()) {
+                tracing::warn!(%err, "could not watch for keyboard changes");
             }
             // Last, and after the bridge and tray are up: on a fresh install
             // this starts a download immediately, and the progress has to have
@@ -187,6 +195,7 @@ fn main() {
             commands::capture_hotkey,
             commands::cancel_hotkey_capture,
             commands::bind_hotkey,
+            commands::active_keyboard_bucket,
             commands::permissions_granted,
             commands::open_permission_settings,
         ])

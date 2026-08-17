@@ -6,7 +6,8 @@
 //! command body as a review failure.
 
 use speakeasy_core::{
-    Config, Engine, Hotkey, ModelChoice, ModelId, ModelInfo, ModelStatus, State, Transcript,
+    Config, Engine, Hotkey, KeyboardBucket, ModelChoice, ModelId, ModelInfo, ModelStatus, State,
+    Transcript,
 };
 use tauri::State as TauriState;
 
@@ -104,8 +105,13 @@ pub fn remove_model(engine: TauriState<'_, Engine>, id: ModelId) -> Result<(), S
 }
 
 #[tauri::command]
-pub fn set_hotkey(engine: TauriState<'_, Engine>, hotkey: Hotkey) {
-    engine.set_hotkey(hotkey);
+pub fn set_hotkey(engine: TauriState<'_, Engine>, bucket: KeyboardBucket, hotkey: Hotkey) {
+    engine.set_hotkey(bucket, hotkey);
+}
+
+#[tauri::command]
+pub fn active_keyboard_bucket(engine: TauriState<'_, Engine>) -> KeyboardBucket {
+    engine.active_bucket()
 }
 
 /// Returns as soon as the keyboard is armed, not when a key arrives. What was
@@ -128,8 +134,9 @@ pub fn cancel_hotkey_capture() {
 /// above a key that does nothing.
 #[tauri::command]
 pub fn bind_hotkey(engine: TauriState<'_, Engine>) -> Result<(), String> {
-    crate::hotkey::bind_if_unbound(engine.inner().clone(), &engine.config().hotkey)
-        .map_err(|err| err.to_string())
+    let bucket = engine.active_bucket();
+    let hotkey = engine.config().hotkeys.get(bucket).clone();
+    crate::hotkey::bind_if_unbound(engine.inner().clone(), &hotkey).map_err(|err| err.to_string())
 }
 
 #[tauri::command]
