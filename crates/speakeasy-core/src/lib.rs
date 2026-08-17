@@ -28,7 +28,8 @@ pub mod fakes;
 mod testing;
 
 pub use config::{
-    ActivationMode, Config, Hotkey, InjectionMode, ModelChoice, ModifierKey, WidgetPosition,
+    ActivationMode, Config, Hotkey, HotkeyBindings, InjectionMode, KeyboardBucket, ModelChoice,
+    ModifierKey, WidgetPosition,
 };
 pub use engine::{Engine, HotkeyAction};
 pub use error::{Error, Result};
@@ -37,7 +38,8 @@ pub use hotkey::{ChordMods, KeyCode};
 pub use models::{ModelId, ModelInfo};
 pub use ports::{
     AudioSource, CancelCallback, CaptureCallback, Delivery, HotkeyCallback, HotkeyEvent,
-    HotkeyListener, SpeechSegment, SpeechSegmenter, TextSink, Transcriber,
+    HotkeyListener, KeyboardBucketCallback, KeyboardWatcher, SpeechSegment, SpeechSegmenter,
+    TextSink, Transcriber,
 };
 
 /// Sample rate every [`Transcriber`] implementation expects.

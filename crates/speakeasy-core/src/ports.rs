@@ -11,7 +11,7 @@
 use std::path::Path;
 use std::sync::atomic::AtomicBool;
 
-use crate::config::Hotkey;
+use crate::config::{Hotkey, KeyboardBucket};
 use crate::error::Result;
 
 /// Captures microphone audio, already resampled to [`crate::TARGET_SAMPLE_RATE`]
@@ -221,4 +221,25 @@ pub trait TextSink: Send + Sync {
     /// the user's previous clipboard shortly after pasting, so by the time
     /// anyone reaches for it the transcript is gone.
     fn copy(&self, text: &str) -> Result<()>;
+}
+
+/// Invoked with the currently-active bucket, once at watch time and again on
+/// every attach/detach that changes it.
+pub type KeyboardBucketCallback = Box<dyn Fn(KeyboardBucket) + Send + Sync>;
+
+/// Reports which keyboard bucket ([`KeyboardBucket::BuiltIn`] or
+/// [`KeyboardBucket::External`]) is active, based on what's attached right
+/// now.
+///
+/// A presence check, not a per-keystroke device attribution: any external
+/// keyboard attached means [`KeyboardBucket::External`], regardless of how
+/// many or which model. See `speakeasy-platform`'s macOS implementation for
+/// how that's read off IOKit.
+pub trait KeyboardWatcher: Send + Sync {
+    /// Start watching. `on_change` must be called at least once with the
+    /// bucket that's active when watching starts — implementations are not
+    /// required to guarantee that call lands before `watch` returns, only
+    /// that it happens once watching is live, the same way a caller must
+    /// already tolerate any later attach/detach arriving asynchronously.
+    fn watch(&self, on_change: KeyboardBucketCallback) -> Result<()>;
 }

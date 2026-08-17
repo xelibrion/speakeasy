@@ -10,7 +10,7 @@ use std::time::{Instant, SystemTime};
 
 use std::path::PathBuf;
 
-use crate::config::{ActivationMode, Config, Hotkey, ModelChoice, WidgetPosition};
+use crate::config::{ActivationMode, Config, Hotkey, KeyboardBucket, ModelChoice, WidgetPosition};
 use crate::error::{Error, Result};
 use crate::event::{Event, ModelStatus, State, Transcript};
 use crate::models::catalog::{self, ModelId, ModelInfo, CATALOG};
@@ -76,6 +76,11 @@ struct Inner {
     /// that works exactly once is a trap. Never persisted — see the design
     /// doc's non-goals.
     history: Mutex<VecDeque<Transcript>>,
+    /// Which keyboard bucket is driving the binding right now. Not
+    /// persisted — this is a live fact about what's plugged in, not a
+    /// preference. Starts `BuiltIn`; the shell corrects it as soon as its
+    /// `KeyboardWatcher` reports in.
+    active_bucket: Mutex<KeyboardBucket>,
 }
 
 /// Preview progress within one recording.
@@ -109,6 +114,7 @@ impl Engine {
             segmenter: Mutex::new(None),
             preview: Mutex::new(Preview::default()),
             history: Mutex::new(VecDeque::new()),
+            active_bucket: Mutex::new(KeyboardBucket::BuiltIn),
         });
 
         // The manager's status changes become ordinary events, so a shell
@@ -200,7 +206,7 @@ impl Engine {
         self.persist();
     }
 
-    /// Rebind the dictation key.
+    /// Rebind the dictation key for one keyboard bucket.
     ///
     /// Its own method rather than a `set_config` round-trip, for the same
     /// reason as [`Engine::set_widget_position`]: the settings window would
@@ -209,19 +215,48 @@ impl Engine {
     ///
     /// Persisting is all this does. Actually binding the key belongs to
     /// whoever owns the listener, which is the shell — it re-registers when it
-    /// sees the event.
-    pub fn set_hotkey(&self, hotkey: Hotkey) {
+    /// sees the event, but only if `bucket` is the one currently active.
+    pub fn set_hotkey(&self, bucket: KeyboardBucket, hotkey: Hotkey) {
         {
             let mut config = self.inner.config.lock().expect("config mutex poisoned");
-            if config.hotkey == hotkey {
+            if config.hotkeys.get(bucket) == &hotkey {
                 return;
             }
-            config.hotkey = hotkey.clone();
+            config.hotkeys.set(bucket, hotkey.clone());
         }
         self.persist();
         // After the lock is released: a subscriber that calls back in while we
         // still held it would deadlock.
-        self.emit(Event::HotkeyChanged { hotkey });
+        self.emit(Event::HotkeyChanged { bucket, hotkey });
+    }
+
+    /// Which keyboard bucket is currently driving the binding.
+    pub fn active_bucket(&self) -> KeyboardBucket {
+        *self
+            .inner
+            .active_bucket
+            .lock()
+            .expect("active bucket mutex poisoned")
+    }
+
+    /// Record that a different keyboard bucket is now active — called by the
+    /// shell when its `KeyboardWatcher` reports an attach/detach that flips
+    /// the bucket.
+    ///
+    /// Not persisted; see the field doc on `Inner::active_bucket`.
+    pub fn set_active_bucket(&self, bucket: KeyboardBucket) {
+        {
+            let mut active = self
+                .inner
+                .active_bucket
+                .lock()
+                .expect("active bucket mutex poisoned");
+            if *active == bucket {
+                return;
+            }
+            *active = bucket;
+        }
+        self.emit(Event::ActiveBucketChanged { bucket });
     }
 
     /// Best-effort: a config that cannot be written is worth a warning, not a
@@ -1052,12 +1087,76 @@ mod tests {
             },
             key: crate::KeyCode::Space,
         };
-        engine.set_hotkey(hotkey.clone());
+        engine.set_hotkey(KeyboardBucket::BuiltIn, hotkey.clone());
 
-        assert_eq!(engine.config().hotkey, hotkey);
-        assert!(events
+        assert_eq!(engine.config().hotkeys.built_in, hotkey);
+        assert!(events.try_iter().any(|event| matches!(
+            event,
+            Event::HotkeyChanged { bucket: KeyboardBucket::BuiltIn, hotkey: ref h } if *h == hotkey
+        )));
+    }
+
+    #[test]
+    fn setting_the_hotkey_only_touches_the_given_bucket() {
+        let (engine, _sink) = engine("anything");
+        let before = engine.config().hotkeys.external.clone();
+
+        engine.set_hotkey(
+            KeyboardBucket::BuiltIn,
+            Hotkey::Chord {
+                mods: crate::ChordMods::default(),
+                key: crate::KeyCode::F13,
+            },
+        );
+
+        assert_eq!(engine.config().hotkeys.external, before);
+    }
+
+    #[test]
+    fn setting_the_hotkey_to_its_current_value_emits_nothing() {
+        let (engine, _sink) = engine("anything");
+        let current = engine.config().hotkeys.built_in.clone();
+        let events = engine.subscribe();
+
+        engine.set_hotkey(KeyboardBucket::BuiltIn, current);
+
+        assert!(!events
             .try_iter()
-            .any(|event| matches!(event, Event::HotkeyChanged { hotkey: ref h } if *h == hotkey)));
+            .any(|event| matches!(event, Event::HotkeyChanged { .. })));
+    }
+
+    #[test]
+    fn the_active_bucket_starts_as_built_in() {
+        let (engine, _sink) = engine("anything");
+        assert_eq!(engine.active_bucket(), KeyboardBucket::BuiltIn);
+    }
+
+    #[test]
+    fn set_active_bucket_announces_the_change() {
+        let (engine, _sink) = engine("anything");
+        let events = engine.subscribe();
+
+        engine.set_active_bucket(KeyboardBucket::External);
+
+        assert_eq!(engine.active_bucket(), KeyboardBucket::External);
+        assert!(events.try_iter().any(|event| matches!(
+            event,
+            Event::ActiveBucketChanged {
+                bucket: KeyboardBucket::External
+            }
+        )));
+    }
+
+    #[test]
+    fn set_active_bucket_to_its_current_value_emits_nothing() {
+        let (engine, _sink) = engine("anything");
+        let events = engine.subscribe();
+
+        engine.set_active_bucket(KeyboardBucket::BuiltIn);
+
+        assert!(!events
+            .try_iter()
+            .any(|event| matches!(event, Event::ActiveBucketChanged { .. })));
     }
 
     /// Poll until `condition` holds, or fail.

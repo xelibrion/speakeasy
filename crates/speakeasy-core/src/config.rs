@@ -29,8 +29,17 @@ impl Default for ModelChoice {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Config {
-    /// The key that drives dictation.
-    pub hotkey: Hotkey,
+    /// The key that drives dictation, one binding per [`KeyboardBucket`].
+    pub hotkeys: HotkeyBindings,
+
+    /// Pre-`HotkeyBindings` setting, read once and migrated into both
+    /// buckets of [`Config::hotkeys`].
+    ///
+    /// Kept only so an existing config does not lose its binding on upgrade.
+    /// [`Config::load`] clears it, so it disappears from the file on the next
+    /// save — same treatment as [`Config::model_path`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hotkey: Option<Hotkey>,
 
     /// Whether that key is held or tapped. See [`ActivationMode`].
     pub activation: ActivationMode,
@@ -130,6 +139,13 @@ impl Config {
         if let Some(path) = self.model_path.take() {
             if self.model == ModelChoice::default() {
                 self.model = ModelChoice::Local { path };
+            }
+        }
+
+        if let Some(hotkey) = self.hotkey.take() {
+            if self.hotkeys == HotkeyBindings::default() {
+                self.hotkeys.built_in = hotkey.clone();
+                self.hotkeys.external = hotkey;
             }
         }
     }
@@ -241,6 +257,62 @@ impl Default for Hotkey {
     }
 }
 
+/// Which physical keyboard is currently driving the binding.
+///
+/// Two buckets, not per-device identity: any external keyboard attached
+/// selects [`KeyboardBucket::External`], regardless of which model it is or
+/// how many are plugged in at once.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum KeyboardBucket {
+    BuiltIn,
+    External,
+}
+
+/// A separate push-to-talk binding for each [`KeyboardBucket`].
+///
+/// Two bindings because the natural key differs by hardware: Right Option
+/// (the default `built_in` binding) exists on every Mac keyboard and on no
+/// PC keyboard, while the Menu key (the default `external` binding) is the
+/// reverse.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HotkeyBindings {
+    pub built_in: Hotkey,
+    pub external: Hotkey,
+}
+
+impl HotkeyBindings {
+    pub fn get(&self, bucket: KeyboardBucket) -> &Hotkey {
+        match bucket {
+            KeyboardBucket::BuiltIn => &self.built_in,
+            KeyboardBucket::External => &self.external,
+        }
+    }
+
+    pub fn set(&mut self, bucket: KeyboardBucket, hotkey: Hotkey) {
+        match bucket {
+            KeyboardBucket::BuiltIn => self.built_in = hotkey,
+            KeyboardBucket::External => self.external = hotkey,
+        }
+    }
+}
+
+impl Default for HotkeyBindings {
+    fn default() -> Self {
+        Self {
+            built_in: Hotkey::default(),
+            // No Apple keyboard has this key, which is exactly why it is a
+            // good push-to-talk binding for anything else — see
+            // `KeyCode::ContextMenu`'s own doc comment.
+            external: Hotkey::Chord {
+                mods: ChordMods::default(),
+                key: KeyCode::ContextMenu,
+            },
+        }
+    }
+}
+
 /// A modifier key, with the side it sits on.
 ///
 /// macOS reports side through IOKit's device-dependent flag bits; the ordinary
@@ -300,7 +372,8 @@ pub enum InjectionMode {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            hotkey: Hotkey::default(),
+            hotkeys: HotkeyBindings::default(),
+            hotkey: None,
             activation: ActivationMode::Toggle,
             model: ModelChoice::default(),
             model_path: None,
@@ -399,12 +472,89 @@ mod tests {
         assert_eq!(back, hotkey);
     }
 
-    /// Written by a version that had `Hotkey::Accelerator`. It never worked on
-    /// macOS — registering it returned `Error::Hotkey` — so there is nothing to
-    /// preserve, but the config as a whole must still load rather than leaving
-    /// the user with an app that will not start.
     #[test]
-    fn a_legacy_accelerator_config_falls_back_to_the_default_binding() {
+    fn hotkey_bindings_default_to_right_option_and_menu() {
+        let bindings = HotkeyBindings::default();
+        assert_eq!(
+            bindings.built_in,
+            Hotkey::Modifier {
+                key: ModifierKey::RightOption
+            }
+        );
+        assert_eq!(
+            bindings.external,
+            Hotkey::Chord {
+                mods: ChordMods::default(),
+                key: KeyCode::ContextMenu
+            }
+        );
+    }
+
+    #[test]
+    fn hotkey_bindings_get_and_set_route_to_the_right_slot() {
+        let mut bindings = HotkeyBindings::default();
+        let chord = Hotkey::Chord {
+            mods: ChordMods {
+                command: true,
+                ..Default::default()
+            },
+            key: KeyCode::Space,
+        };
+        bindings.set(KeyboardBucket::External, chord.clone());
+        assert_eq!(bindings.get(KeyboardBucket::External), &chord);
+        assert_eq!(bindings.get(KeyboardBucket::BuiltIn), &Hotkey::default());
+    }
+
+    #[test]
+    fn hotkey_bindings_round_trip_through_json() {
+        let mut bindings = HotkeyBindings::default();
+        bindings.set(
+            KeyboardBucket::External,
+            Hotkey::Chord {
+                mods: ChordMods::default(),
+                key: KeyCode::F13,
+            },
+        );
+        let text = serde_json::to_string(&bindings).expect("serialises");
+        let back: HotkeyBindings = serde_json::from_str(&text).expect("deserialises");
+        assert_eq!(back, bindings);
+    }
+
+    /// A config written before this feature has a bare top-level `hotkey`, not
+    /// `hotkeys`. It must migrate into both buckets, preserving whatever custom
+    /// binding was there — the same "absent vs. explicitly default" guard
+    /// `model_path` migration already uses.
+    #[test]
+    fn a_legacy_single_hotkey_config_migrates_to_both_buckets() {
+        let dir = TempDir::new("legacy-hotkey-migration");
+        let path = dir.join("config.json");
+        std::fs::write(
+            &path,
+            r#"{"hotkey":{"kind":"chord","mods":{"command":true,"option":true,"control":false,"shift":false},"key":"space"}}"#,
+        )
+        .expect("write should succeed");
+
+        let config = Config::load(&path).expect("a legacy config should load");
+
+        let expected = Hotkey::Chord {
+            mods: ChordMods {
+                command: true,
+                option: true,
+                control: false,
+                shift: false,
+            },
+            key: KeyCode::Space,
+        };
+        assert_eq!(config.hotkeys.built_in, expected);
+        assert_eq!(config.hotkeys.external, expected);
+        assert_eq!(config.hotkey, None, "the legacy field is consumed");
+    }
+
+    /// The legacy `Accelerator` shape maps to the ordinary default binding (see
+    /// the existing `HotkeyRepr` migration below), which then propagates to both
+    /// buckets the same way any other legacy value would.
+    #[test]
+    fn a_legacy_accelerator_config_falls_back_to_the_default_binding_on_both_buckets() {
         let dir = TempDir::new("legacy-hotkey");
         let path = dir.join("config.json");
         std::fs::write(
@@ -414,7 +564,22 @@ mod tests {
         .expect("write should succeed");
 
         let config = Config::load(&path).expect("a legacy config should still load");
-        assert_eq!(config.hotkey, Config::default().hotkey);
+        assert_eq!(config.hotkeys.built_in, Hotkey::default());
+        assert_eq!(config.hotkeys.external, Hotkey::default());
+    }
+
+    #[test]
+    fn a_saved_config_does_not_write_the_legacy_hotkey_field() {
+        let dir = TempDir::new("no-legacy-hotkey-field");
+        let path = dir.join("config.json");
+
+        Config::default().save(&path).expect("save should succeed");
+
+        let text = std::fs::read_to_string(&path).expect("read should succeed");
+        assert!(
+            !text.contains("\"hotkey\":"),
+            "unexpected legacy field: {text}"
+        );
     }
 
     #[test]

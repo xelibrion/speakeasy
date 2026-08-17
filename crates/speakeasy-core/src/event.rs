@@ -1,6 +1,6 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::config::Hotkey;
+use crate::config::{Hotkey, KeyboardBucket};
 use crate::error::Error;
 use crate::models::ModelId;
 
@@ -139,7 +139,15 @@ pub enum Event {
     /// is owned by the shell, and moving it in here would mean the engine held
     /// a listener holding a callback holding the engine.
     HotkeyChanged {
+        bucket: KeyboardBucket,
         hotkey: Hotkey,
+    },
+
+    /// Which keyboard bucket is driving the binding changed — an external
+    /// keyboard attached or detached. The shell re-registers with that
+    /// bucket's `Hotkey`; Settings uses it to move the "active" indicator.
+    ActiveBucketChanged {
+        bucket: KeyboardBucket,
     },
 
     /// Model download or load progress.
