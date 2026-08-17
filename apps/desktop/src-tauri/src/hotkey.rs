@@ -12,7 +12,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
 
-use speakeasy_core::{Engine, Hotkey, HotkeyAction, HotkeyListener};
+use speakeasy_core::{Engine, Hotkey, HotkeyAction, HotkeyListener, KeyboardWatcher};
 
 /// The listener owns an OS-level tap and must outlive `setup`.
 static LISTENER: OnceLock<Box<dyn HotkeyListener>> = OnceLock::new();
@@ -50,15 +50,29 @@ fn listener() -> &'static dyn HotkeyListener {
 /// is one path for "the binding changed" instead of a second one that only
 /// capture uses.
 pub fn capture(engine: Engine) -> Result<(), Box<dyn std::error::Error>> {
+    let bucket = engine.active_bucket();
     listener().capture(Box::new(move |hotkey| {
-        tracing::info!(hotkey = hotkey.label(), "captured a new binding");
-        engine.set_hotkey(hotkey);
+        tracing::info!(hotkey = hotkey.label(), ?bucket, "captured a new binding");
+        engine.set_hotkey(bucket, hotkey);
     }))?;
     Ok(())
 }
 
 pub fn cancel_capture() {
     listener().cancel_capture();
+}
+
+/// Starts the platform's keyboard-bucket watcher. Its callback only updates
+/// `Engine::active_bucket` — the actual re-registration happens in
+/// `bridge.rs`'s `ActiveBucketChanged` handler, the same "decide here, act
+/// there" split `Engine::set_hotkey` already uses for `HotkeyChanged`.
+///
+/// Leaks the watcher: nothing ever tears it down for the life of the
+/// process, the same trade `LISTENER` above already makes for the tap.
+pub fn watch_keyboard(engine: Engine) -> Result<(), Box<dyn std::error::Error>> {
+    let watcher: &'static dyn KeyboardWatcher = Box::leak(speakeasy_platform::keyboard_watcher());
+    watcher.watch(Box::new(move |bucket| engine.set_active_bucket(bucket)))?;
+    Ok(())
 }
 
 pub fn register(engine: Engine, hotkey: &Hotkey) -> Result<(), Box<dyn std::error::Error>> {
