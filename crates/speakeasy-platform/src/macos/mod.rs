@@ -1,5 +1,6 @@
 mod focus;
 mod hotkey;
+mod keyboard_watch;
 mod keycode;
 mod secure_input;
 mod text_sink;
@@ -11,9 +12,10 @@ use core_foundation::boolean::CFBoolean;
 use core_foundation::dictionary::{CFDictionary, CFDictionaryRef};
 use core_foundation::string::{CFString, CFStringRef};
 use speakeasy_core::config::InjectionMode;
-use speakeasy_core::{HotkeyListener, TextSink};
+use speakeasy_core::{HotkeyListener, KeyboardWatcher, TextSink};
 
 pub use hotkey::MacHotkeys;
+pub use keyboard_watch::MacKeyboardWatcher;
 pub use text_sink::MacTextSink;
 
 /// Name and pid of the frontmost application, as NSWorkspace sees it.
@@ -152,6 +154,10 @@ pub fn text_sink(mode: InjectionMode) -> Box<dyn TextSink> {
 
 pub fn hotkey_listener() -> Box<dyn HotkeyListener> {
     Box::new(MacHotkeys::new())
+}
+
+pub fn keyboard_watcher() -> Box<dyn KeyboardWatcher> {
+    Box::new(MacKeyboardWatcher::new())
 }
 
 #[link(name = "ApplicationServices", kind = "framework")]

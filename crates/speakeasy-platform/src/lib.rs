@@ -15,7 +15,7 @@ mod linux;
 #[cfg(target_os = "linux")]
 use linux as sys;
 
-use speakeasy_core::{Config, HotkeyListener, TextSink};
+use speakeasy_core::{Config, HotkeyListener, KeyboardWatcher, TextSink};
 
 pub use audio::CpalAudioSource;
 
@@ -31,6 +31,11 @@ pub fn text_sink(config: &Config) -> Box<dyn TextSink> {
 /// shortcut library exposes.
 pub fn hotkey_listener() -> Box<dyn HotkeyListener> {
     sys::hotkey_listener()
+}
+
+/// Reports which keyboard bucket (built-in or external) is active right now.
+pub fn keyboard_watcher() -> Box<dyn KeyboardWatcher> {
+    sys::keyboard_watcher()
 }
 
 /// Whether the OS-level permissions needed for capture and injection have been
