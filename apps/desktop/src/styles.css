@@ -203,6 +203,18 @@ body {
   font-size: 12px;
 }
 
+.setting-active {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.setting-active[hidden] {
+  display: none;
+}
+
 /* A CSS switch standing in for `NSSwitch` — the shell is a webview, so there
    is no real one available. `AccentColor` keeps it tied to the system's own
    accent rather than a color picked for this app. */

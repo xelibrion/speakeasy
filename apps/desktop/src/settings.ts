@@ -13,6 +13,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open } from "@tauri-apps/plugin-dialog";
 
 import {
+  activeKeyboardBucket,
   bindHotkey,
   cancelHotkeyCapture,
   cancelModelDownload,
@@ -38,6 +39,7 @@ import {
   selectModel,
   type Config,
   type Hotkey,
+  type KeyboardBucket,
   type ModelId,
   type ModelInfo,
   type ModelStatus,
@@ -176,10 +178,15 @@ async function renderPermissions(banner: HTMLElement): Promise<void> {
 
 async function mountDictation(panel: HTMLElement): Promise<void> {
   const config = await getConfig();
+  const activeBucket = await activeKeyboardBucket();
+
+  const builtIn = await hotkeyRow(config, "builtIn", "Built-in keyboard", activeBucket);
+  const external = await hotkeyRow(config, "external", "External keyboard", activeBucket);
 
   const primary = element("div", "card");
   primary.append(
-    await hotkeyRow(config),
+    builtIn.element,
+    external.element,
     toggleRow("Live preview", config.transcriptPreview, (value) => {
       void setConfig({ ...config, transcriptPreview: value });
     }),
@@ -199,35 +206,56 @@ async function mountDictation(panel: HTMLElement): Promise<void> {
   const note = element("p", "note");
   note.textContent = "Insertion and language are not editable yet. Edit config.json to change them.";
   panel.append(note);
+
+  releasePanel = () => {
+    builtIn.release();
+    external.release();
+  };
 }
 
+type HotkeyRow = { element: HTMLElement; release: () => void };
+
 /**
- * The binding, and a button that reads the next key pressed.
+ * One binding — built-in or external — and a button that reads the next key
+ * pressed.
  *
  * No validity check here on purpose: whether a key can be bound is the
  * platform's answer, and a second opinion in the webview is exactly the kind of
  * drift this codebase is arranged to avoid. The pane renders what comes back.
+ *
+ * `initialActive` is a one-time snapshot for the first paint; the row keeps
+ * itself honest afterward via `activeBucketChanged`, the same way it already
+ * does for `hotkeyChanged`.
  */
-async function hotkeyRow(config: Config): Promise<HTMLElement> {
+async function hotkeyRow(
+  config: Config,
+  bucket: KeyboardBucket,
+  label: string,
+  initialActive: KeyboardBucket,
+): Promise<HotkeyRow> {
   const wrapper = element("div", "setting-block");
   const line = element("div", "setting");
   const name = element("span", "setting-label");
-  name.textContent = "Hotkey";
+  name.textContent = label;
+  const active = element("span", "setting-active");
+  active.textContent = "Active";
   const value = element("span", "setting-value");
   const action = document.createElement("button");
-  line.append(name, value, action);
+  line.append(name, active, value, action);
 
   const problem = element("div", "setting-error");
   wrapper.append(line, problem);
 
   let listening = false;
+  let isActive = bucket === initialActive;
 
   const draw = (hotkey: Hotkey) => {
     value.textContent = listening ? "Press a key…" : hotkeyLabel(hotkey);
     action.textContent = listening ? "Cancel" : "Change";
+    active.hidden = !isActive;
   };
 
-  let current = config.hotkey;
+  let current = config.hotkeys[bucket];
   draw(current);
 
   action.addEventListener("click", () => {
@@ -255,23 +283,32 @@ async function hotkeyRow(config: Config): Promise<HTMLElement> {
   });
 
   // The capture reports through the ordinary rebinding event, so this is also
-  // what keeps the row honest if the binding changes from anywhere else.
+  // what keeps the row honest if the binding changes from anywhere else. A
+  // capture always writes into whichever bucket was active when it started
+  // (see the shell's `hotkey::capture`), so only react to a change for this
+  // row's own bucket.
   const unlisten = await onEngineEvent((event) => {
-    if (event.type !== "hotkeyChanged") return;
-    listening = false;
-    current = event.hotkey;
-    draw(current);
+    if (event.type === "hotkeyChanged" && event.bucket === bucket) {
+      listening = false;
+      current = event.hotkey;
+      draw(current);
+      return;
+    }
+    if (event.type === "activeBucketChanged") {
+      isActive = event.bucket === bucket;
+      draw(current);
+    }
   });
 
   // A capture swallows keystrokes. Leaving one armed behind a tab the user has
   // navigated away from would half-deaden the keyboard with nothing on screen
   // to explain it.
-  releasePanel = () => {
+  const release = () => {
     unlisten();
     if (listening) void cancelHotkeyCapture();
   };
 
-  return wrapper;
+  return { element: wrapper, release };
 }
 
 async function mountModels(panel: HTMLElement): Promise<void> {
