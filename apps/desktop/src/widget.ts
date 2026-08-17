@@ -9,6 +9,7 @@
  * event stream cheap.
  */
 import {
+  activeKeyboardBucket,
   cancel,
   copyTranscript,
   errorLabel,
@@ -20,6 +21,7 @@ import {
   stopHint,
   SPECTRUM_BANDS,
   type Config,
+  type KeyboardBucket,
   type State,
 } from "./engine";
 
@@ -87,6 +89,9 @@ export function mountWidget(root: HTMLElement) {
   // The hotkey and the activation mode can both change at runtime, so the hint
   // is rebuilt from config rather than baked in at mount.
   let config: Config | null = null;
+  let bucket: KeyboardBucket = "builtIn";
+
+  const currentHint = () => (config ? stopHint(config.hotkeys[bucket], config.activation) : "");
 
   const render = (state: State) => {
     pill.dataset.state = state.state;
@@ -100,7 +105,7 @@ export function mountWidget(root: HTMLElement) {
     }
 
     recording = state.state === "recording";
-    hint.textContent = recording && config ? stopHint(config) : "";
+    hint.textContent = recording ? currentHint() : "";
     if (!recording) for (const bar of bars) bar.style.transform = "scaleY(0)";
     // Cleared on the way out of recording, so a discarded tap or a cancel
     // leaves no text behind to be mistaken for something that was inserted.
@@ -155,8 +160,8 @@ export function mountWidget(root: HTMLElement) {
   };
 
   const refreshConfig = async () => {
-    config = await getConfig();
-    if (recording) hint.textContent = stopHint(config);
+    [config, bucket] = await Promise.all([getConfig(), activeKeyboardBucket()]);
+    if (recording) hint.textContent = currentHint();
   };
 
   void refreshConfig();
