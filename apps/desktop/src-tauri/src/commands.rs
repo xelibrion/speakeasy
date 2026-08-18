@@ -116,9 +116,15 @@ pub fn active_keyboard_bucket(engine: TauriState<'_, Engine>) -> KeyboardBucket 
 
 /// Returns as soon as the keyboard is armed, not when a key arrives. What was
 /// pressed comes back as a `HotkeyChanged` event like any other rebinding.
+///
+/// `bucket` names the row that started the capture — see `hotkey::capture`
+/// for why that must not be inferred from `Engine::active_bucket`.
 #[tauri::command]
-pub fn capture_hotkey(engine: TauriState<'_, Engine>) -> Result<(), String> {
-    crate::hotkey::capture(engine.inner().clone()).map_err(|err| err.to_string())
+pub fn capture_hotkey(
+    engine: TauriState<'_, Engine>,
+    bucket: KeyboardBucket,
+) -> Result<(), String> {
+    crate::hotkey::capture(engine.inner().clone(), bucket).map_err(|err| err.to_string())
 }
 
 #[tauri::command]

@@ -12,7 +12,9 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
 
-use speakeasy_core::{Engine, Hotkey, HotkeyAction, HotkeyListener, KeyboardWatcher};
+use speakeasy_core::{
+    Engine, Hotkey, HotkeyAction, HotkeyListener, KeyboardBucket, KeyboardWatcher,
+};
 
 /// The listener owns an OS-level tap and must outlive `setup`.
 static LISTENER: OnceLock<Box<dyn HotkeyListener>> = OnceLock::new();
@@ -42,15 +44,21 @@ fn listener() -> &'static dyn HotkeyListener {
         .as_ref()
 }
 
-/// Read one binding from the keyboard and adopt it.
+/// Read one binding from the keyboard and adopt it into `bucket`.
+///
+/// `bucket` names the row the capture was started from — not
+/// `engine.active_bucket()`. Those usually agree, but a keyboard attaching or
+/// detaching (or, on macOS, IOKit briefly misreporting a virtual HID device)
+/// can flip the active bucket at any moment; inferring the target from it
+/// would silently write the captured key into whichever row the OS *currently*
+/// thinks is live, not the row the user is actually looking at.
 ///
 /// The captured key goes straight to the engine rather than back to the
 /// caller. `set_hotkey` then persists it and emits `HotkeyChanged`, which is
 /// what both re-registers the binding and tells the settings window — so there
 /// is one path for "the binding changed" instead of a second one that only
 /// capture uses.
-pub fn capture(engine: Engine) -> Result<(), Box<dyn std::error::Error>> {
-    let bucket = engine.active_bucket();
+pub fn capture(engine: Engine, bucket: KeyboardBucket) -> Result<(), Box<dyn std::error::Error>> {
     listener().capture(Box::new(move |hotkey| {
         tracing::info!(hotkey = hotkey.label(), ?bucket, "captured a new binding");
         engine.set_hotkey(bucket, hotkey);

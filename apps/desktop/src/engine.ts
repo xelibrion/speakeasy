@@ -307,10 +307,15 @@ export const activeKeyboardBucket = () => invoke<KeyboardBucket>("active_keyboar
 /**
  * Arms the keyboard and returns; it does not resolve with the key.
  *
+ * `bucket` is which row started the capture — the result is written into
+ * that bucket regardless of which one the backend currently considers
+ * active, since a keyboard attach/detach can flip that at any moment.
+ *
  * What was pressed comes back as a `hotkeyChanged` event, the same one a
  * rebinding from anywhere else emits — so the pane has one thing to listen to.
  */
-export const captureHotkey = () => invoke<void>("capture_hotkey");
+export const captureHotkey = (bucket: KeyboardBucket) =>
+  invoke<void>("capture_hotkey", { bucket });
 export const cancelHotkeyCapture = () => invoke<void>("cancel_hotkey_capture");
 
 /** Retry the binding, for a grant that arrived after startup. */

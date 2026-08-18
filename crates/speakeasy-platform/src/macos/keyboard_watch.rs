@@ -178,6 +178,31 @@ fn is_built_in(device: IOHIDDeviceRef) -> bool {
     }
 }
 
+/// Whether IOKit reports this device arriving over a transport a physical
+/// keyboard would actually use.
+///
+/// Keyboard-remapping and screen-sharing software (Karabiner-Elements'
+/// VirtualHIDKeyboard driver, in particular) installs its own HID keyboard
+/// device with no physical transport at all. `kIOHIDBuiltInKey` alone can't
+/// tell that apart from a real PC keyboard — both report `false` — so a
+/// machine merely running one of these tools would permanently misclassify
+/// itself as having an external keyboard attached, with no external keyboard
+/// anywhere in sight. Requiring a recognized transport is what excludes it.
+fn has_real_transport(device: IOHIDDeviceRef) -> bool {
+    let key = CFString::new("Transport");
+    unsafe {
+        let value = IOHIDDeviceGetProperty(device, key.as_concrete_TypeRef());
+        if value.is_null() {
+            return false;
+        }
+        let transport: CFString = TCFType::wrap_under_get_rule(value as CFStringRef);
+        matches!(
+            transport.to_string().as_str(),
+            "USB" | "Bluetooth" | "BluetoothLowEnergy" | "SPI" | "I2C"
+        )
+    }
+}
+
 extern "C" fn on_matched(
     context: *mut c_void,
     _result: IOReturn,
@@ -189,11 +214,29 @@ extern "C" fn on_matched(
     // `unwatch` that would free it first.
     let watch = unsafe { &*(context as *const Watch) };
     let built_in = is_built_in(device);
+
+    // A non-built-in device is only trusted as "external" if it also arrived
+    // over hardware. Anything else (virtual HID drivers, remote-control
+    // tools) is ignored entirely rather than mistaken for a PC keyboard.
+    if !built_in && !has_real_transport(device) {
+        tracing::info!(
+            device = device as usize,
+            "ignoring a non-hardware keyboard device"
+        );
+        return;
+    }
+
     let bucket = watch
         .tracker
         .lock()
         .expect("keyboard tracker mutex poisoned")
         .attach(DeviceId(device as usize), built_in);
+    tracing::info!(
+        device = device as usize,
+        built_in,
+        ?bucket,
+        "keyboard matched"
+    );
     (watch.on_change)(bucket);
 }
 
@@ -210,6 +253,7 @@ extern "C" fn on_removed(
         .lock()
         .expect("keyboard tracker mutex poisoned")
         .detach(DeviceId(device as usize));
+    tracing::info!(device = device as usize, ?bucket, "keyboard removed");
     (watch.on_change)(bucket);
 }
 

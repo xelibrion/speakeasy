@@ -271,7 +271,7 @@ async function hotkeyRow(
       listening = true;
       draw(current);
       try {
-        await captureHotkey();
+        await captureHotkey(bucket);
       } catch (err) {
         // The likeliest cause is a missing Accessibility grant, which the
         // banner above already explains how to fix.

@@ -256,6 +256,7 @@ impl Engine {
             }
             *active = bucket;
         }
+        tracing::info!(?bucket, "active keyboard bucket changed");
         self.emit(Event::ActiveBucketChanged { bucket });
     }
 
