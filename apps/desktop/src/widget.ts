@@ -123,7 +123,13 @@ export function mountWidget(root: HTMLElement) {
   };
 
   /**
-   * Show the rescue row when the failure left a transcript stranded.
+   * Show the rescue row on any failure, and the Copy button within it only
+   * when the failure left a transcript stranded.
+   *
+   * Dismiss must stay reachable even with nothing to copy — a check caught
+   * before recording started (secure input, say) leaves the pill up with no
+   * other way off screen, since the panel never takes keyboard focus and so
+   * can never be dismissed with Escape.
    *
    * Asks the engine rather than remembering the last `transcript` event: the
    * widget is a renderer, and a copy of the text kept here would be a second
@@ -135,8 +141,11 @@ export function mountWidget(root: HTMLElement) {
       return;
     }
 
+    rescue.hidden = false;
     const text = await getRecoverableTranscript().catch(() => null);
-    rescue.hidden = text === null;
+    // `.preview:empty` already collapses the box when there is nothing to
+    // show; `render` clears it on the way into every non-recording state.
+    copyButton.hidden = text === null;
     if (text === null) return;
 
     copyButton.textContent = "Copy";

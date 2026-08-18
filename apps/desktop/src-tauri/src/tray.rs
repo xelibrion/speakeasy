@@ -128,14 +128,6 @@ fn render() {
         }
     }
 
-    let recording = matches!(
-        LAST_STATE
-            .lock()
-            .expect("last state mutex poisoned")
-            .as_ref(),
-        Some(State::Recording)
-    );
-
     if let Some(item) = SPEAK_ITEM
         .lock()
         .expect("speak item mutex poisoned")
@@ -147,13 +139,24 @@ fn render() {
     }
 
     // Only while there is something to discard: an always-present Cancel
-    // invites the question of what it would cancel.
+    // invites the question of what it would cancel. That includes
+    // `Failed`/`Unconfirmed`, not just `Recording` — those are exactly the
+    // states where `Engine::cancel` is the only way back to `Idle`, mirroring
+    // the widget's Dismiss button.
+    let cancelable = matches!(
+        LAST_STATE
+            .lock()
+            .expect("last state mutex poisoned")
+            .as_ref(),
+        Some(State::Recording | State::Failed { .. } | State::Unconfirmed)
+    );
+
     if let Some(item) = CANCEL_ITEM
         .lock()
         .expect("cancel item mutex poisoned")
         .as_ref()
     {
-        if let Err(err) = item.set_enabled(recording) {
+        if let Err(err) = item.set_enabled(cancelable) {
             tracing::warn!(%err, "could not update the cancel item");
         }
     }
