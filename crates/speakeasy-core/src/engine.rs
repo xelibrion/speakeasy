@@ -216,15 +216,24 @@ impl Engine {
     /// Persisting is all this does. Actually binding the key belongs to
     /// whoever owns the listener, which is the shell — it re-registers when it
     /// sees the event, but only if `bucket` is the one currently active.
+    ///
+    /// Always emits, even when `hotkey` matches what was already stored: a
+    /// capture completing on the bucket's current key is a real event the
+    /// settings window is waiting on to leave "Press a key…", not a no-op —
+    /// only the write to disk can be skipped when nothing changed.
     pub fn set_hotkey(&self, bucket: KeyboardBucket, hotkey: Hotkey) {
-        {
+        let changed = {
             let mut config = self.inner.config.lock().expect("config mutex poisoned");
             if config.hotkeys.get(bucket) == &hotkey {
-                return;
+                false
+            } else {
+                config.hotkeys.set(bucket, hotkey.clone());
+                true
             }
-            config.hotkeys.set(bucket, hotkey.clone());
+        };
+        if changed {
+            self.persist();
         }
-        self.persist();
         // After the lock is released: a subscriber that calls back in while we
         // still held it would deadlock.
         self.emit(Event::HotkeyChanged { bucket, hotkey });
@@ -1125,16 +1134,21 @@ mod tests {
     }
 
     #[test]
-    fn setting_the_hotkey_to_its_current_value_emits_nothing() {
+    fn setting_the_hotkey_to_its_current_value_still_announces_it() {
+        // A capture that lands on the bucket's already-bound key is exactly
+        // what happens when the user re-presses their existing binding — the
+        // settings window is waiting on this event to leave "Press a key…",
+        // so it must fire even though there is nothing new to persist.
         let (engine, _sink) = engine("anything");
         let current = engine.config().hotkeys.built_in.clone();
         let events = engine.subscribe();
 
-        engine.set_hotkey(KeyboardBucket::BuiltIn, current);
+        engine.set_hotkey(KeyboardBucket::BuiltIn, current.clone());
 
-        assert!(!events
-            .try_iter()
-            .any(|event| matches!(event, Event::HotkeyChanged { .. })));
+        assert!(events.try_iter().any(|event| matches!(
+            event,
+            Event::HotkeyChanged { bucket: KeyboardBucket::BuiltIn, hotkey: ref h } if *h == current
+        )));
     }
 
     #[test]
