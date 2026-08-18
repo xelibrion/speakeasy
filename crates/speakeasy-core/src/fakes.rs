@@ -189,6 +189,11 @@ impl Transcriber for FakeTranscriber {
         *self.ready.lock().expect("ready mutex poisoned") = true;
         Ok(())
     }
+
+    fn unload(&self) {
+        *self.loaded.lock().expect("loaded mutex poisoned") = None;
+        *self.ready.lock().expect("ready mutex poisoned") = false;
+    }
 }
 
 /// So a test can hold an `Arc<FakeTranscriber>` to assert on while the engine
@@ -204,6 +209,10 @@ impl Transcriber for Arc<FakeTranscriber> {
 
     fn load(&self, path: &Path) -> Result<()> {
         self.as_ref().load(path)
+    }
+
+    fn unload(&self) {
+        self.as_ref().unload()
     }
 }
 

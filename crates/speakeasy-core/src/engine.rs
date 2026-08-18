@@ -655,6 +655,17 @@ impl Engine {
         self.emit(Event::HistoryChanged);
     }
 
+    /// Release GPU-backed resources before the process exits.
+    ///
+    /// The shell must call this ahead of any `exit()`-family call (a tray
+    /// Quit, say). Those terminate the process without running Rust's `Drop`,
+    /// so weights a [`Transcriber`] still holds open would outlive the backend
+    /// singleton tracking their GPU buffers — which some backends detect and
+    /// abort on, rather than merely leaking.
+    pub fn shutdown(&self) {
+        self.inner.transcriber.unload();
+    }
+
     pub fn cancel(&self) {
         let _ = self.inner.audio.stop();
         *self

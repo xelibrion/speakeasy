@@ -56,6 +56,9 @@ impl WhisperTranscriber {
 
         let context = WhisperContext::new_with_params(path, params)
             .map_err(|err| Error::Transcription(format!("could not load {path}: {err}")))?;
+        // See `Transcriber::unload`: whatever frees this must run before the
+        // process exits, or the GPU buffers it owns outlive the Metal device
+        // singleton that tracks them.
 
         // Named "speech model", and the detector's line names itself, because
         // whisper.cpp logs both contexts through the same hooks with nothing to
@@ -153,6 +156,13 @@ impl Transcriber for WhisperTranscriber {
         let context = Self::open(path)?;
         *self.context.lock().expect("whisper context mutex poisoned") = Some(context);
         Ok(())
+    }
+
+    fn unload(&self) {
+        // Dropping the context here, on the way out through ordinary Rust
+        // control flow, is what runs whisper.cpp's own teardown — including
+        // freeing its Metal buffers — before anything can call `exit()`.
+        *self.context.lock().expect("whisper context mutex poisoned") = None;
     }
 }
 

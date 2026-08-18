@@ -66,6 +66,15 @@ pub trait Transcriber: Send + Sync {
     /// intact when this fails — a bad swap should cost the user nothing, which
     /// is what lets the download flow verify and load before committing.
     fn load(&self, path: &Path) -> Result<()>;
+
+    /// Release whatever is loaded, synchronously.
+    ///
+    /// The shell must call this before an `exit()`-family call. Those skip
+    /// Rust's own `Drop` entirely, and a GPU-backed implementation whose
+    /// weights are still resident when the process tears down can hit a
+    /// backend-level assertion on the way out — see the caller in
+    /// `Engine::shutdown` for the concrete case this exists to prevent.
+    fn unload(&self);
 }
 
 /// A span of speech within a buffer, in seconds from its start.

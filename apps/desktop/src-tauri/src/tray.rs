@@ -78,7 +78,13 @@ pub fn attach(app: &AppHandle, engine: &Engine) -> Result<(), Box<dyn std::error
         "speak" => toggle_recording(&engine),
         "cancel" => engine.cancel(),
         "settings" => show_settings(app),
-        "quit" => app.exit(0),
+        "quit" => {
+            // Must run before `exit`, which terminates the process without
+            // giving Rust's `Drop` a chance to free the loaded model — see
+            // `Engine::shutdown`.
+            engine.shutdown();
+            app.exit(0);
+        }
         _ => {}
     });
 
