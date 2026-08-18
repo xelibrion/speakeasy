@@ -151,6 +151,7 @@ fn main() {
             // Core events → webview events. The only place the two worlds meet.
             bridge::forward_events(app.handle().clone(), engine.clone());
             tray::attach(app.handle(), &engine)?;
+            tray::keep_settings_alive(app.handle());
             widget::remember_moves(app.handle(), &engine);
             // A failure here is usually a missing Accessibility grant. Log it
             // and keep running: the tray still works, and the settings window

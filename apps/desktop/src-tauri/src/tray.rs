@@ -16,7 +16,7 @@ use std::sync::Mutex;
 
 use speakeasy_core::{Engine, ModelStatus, State};
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Manager, WindowEvent};
 
 /// The status line, kept so the bridge can rewrite its text.
 static STATUS_ITEM: Mutex<Option<MenuItem<tauri::Wry>>> = Mutex::new(None);
@@ -212,6 +212,28 @@ fn status_text() -> String {
         Some(State::Unconfirmed) => "Text may not have been inserted".to_string(),
         Some(State::Idle) | None => "Ready".to_string(),
     }
+}
+
+/// Hide the settings window instead of letting its close button destroy it.
+///
+/// Tauri's default is to tear the window down on close, and `get_webview_window`
+/// then returns `None` for good — `show_settings` would warn forever after the
+/// first time the user closes it. Call once at startup, alongside `attach`.
+pub fn keep_settings_alive(app: &AppHandle) {
+    let Some(window) = app.get_webview_window("settings") else {
+        tracing::warn!("no window labelled `settings`; it will not survive being closed");
+        return;
+    };
+
+    let hide = window.clone();
+    window.on_window_event(move |event| {
+        if let WindowEvent::CloseRequested { api, .. } = event {
+            api.prevent_close();
+            if let Err(err) = hide.hide() {
+                tracing::warn!(%err, "could not hide the settings window");
+            }
+        }
+    });
 }
 
 fn show_settings(app: &AppHandle) {
