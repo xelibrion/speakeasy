@@ -250,5 +250,10 @@ pub trait KeyboardWatcher: Send + Sync {
     /// required to guarantee that call lands before `watch` returns, only
     /// that it happens once watching is live, the same way a caller must
     /// already tolerate any later attach/detach arriving asynchronously.
-    fn watch(&self, on_change: KeyboardBucketCallback) -> Result<()>;
+    ///
+    /// `ignored_products` names devices to never count as external, matched
+    /// case-insensitively against the device's own product string — see
+    /// `Config::ignored_keyboard_devices` for why a static allow/deny list is
+    /// the only thing that can settle a case IOKit's own properties can't.
+    fn watch(&self, ignored_products: &[String], on_change: KeyboardBucketCallback) -> Result<()>;
 }

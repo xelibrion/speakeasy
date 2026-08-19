@@ -174,6 +174,13 @@ export type Config = {
   minRecordingMs: number;
   transcriptPreview: boolean;
   widgetPosition: WidgetPosition | null;
+  /**
+   * HID product names (e.g. "USB Receiver") never counted as an external
+   * keyboard. See `core::config::Config::ignored_keyboard_devices` — a mouse
+   * receiver's idle keyboard interface is otherwise indistinguishable from a
+   * real one, so this has to be a name the user copies out of the log.
+   */
+  ignoredKeyboardDevices: string[];
 };
 
 const MODIFIER_LABELS: Record<ModifierKey, string> = {

@@ -83,6 +83,18 @@ pub struct Config {
     /// this is the struct that gets written to disk. A shell with no floating
     /// widget simply leaves it alone.
     pub widget_position: Option<WidgetPosition>,
+
+    /// HID product names to never count as an external keyboard, matched
+    /// case-insensitively against `kIOHIDProductKey`.
+    ///
+    /// Exists because a wireless mouse's receiver dongle commonly exposes an
+    /// idle keyboard-capable HID interface even when no keyboard is paired to
+    /// it — indistinguishable from a real external keyboard by any property
+    /// IOKit reports, so there is no heuristic that gets this right for
+    /// everyone. The keyboard-watch log names the product on every match;
+    /// paste it here for a device that keeps pinning the bucket to
+    /// `External` with nothing that looks like a keyboard actually attached.
+    pub ignored_keyboard_devices: Vec<String>,
 }
 
 /// Physical screen coordinates of the widget's top-left corner.
@@ -382,6 +394,7 @@ impl Default for Config {
             min_recording_ms: 250,
             transcript_preview: true,
             widget_position: None,
+            ignored_keyboard_devices: Vec::new(),
         }
     }
 }

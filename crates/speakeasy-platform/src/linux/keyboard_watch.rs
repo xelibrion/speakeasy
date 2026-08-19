@@ -16,7 +16,7 @@ impl X11KeyboardWatcher {
 }
 
 impl KeyboardWatcher for X11KeyboardWatcher {
-    fn watch(&self, on_change: KeyboardBucketCallback) -> Result<()> {
+    fn watch(&self, _ignored_products: &[String], on_change: KeyboardBucketCallback) -> Result<()> {
         on_change(KeyboardBucket::BuiltIn);
         Ok(())
     }

@@ -79,7 +79,11 @@ pub fn cancel_capture() {
 /// process, the same trade `LISTENER` above already makes for the tap.
 pub fn watch_keyboard(engine: Engine) -> Result<(), Box<dyn std::error::Error>> {
     let watcher: &'static dyn KeyboardWatcher = Box::leak(speakeasy_platform::keyboard_watcher());
-    watcher.watch(Box::new(move |bucket| engine.set_active_bucket(bucket)))?;
+    let ignored = engine.config().ignored_keyboard_devices.clone();
+    watcher.watch(
+        &ignored,
+        Box::new(move |bucket| engine.set_active_bucket(bucket)),
+    )?;
     Ok(())
 }
 

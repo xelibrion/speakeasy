@@ -161,6 +161,9 @@ extern "C" {
 /// whatever thread IOKit chooses to deliver them on.
 struct Watch {
     tracker: Mutex<BucketTracker>,
+    /// Lower-cased once at watch time; `on_matched` lower-cases the device's
+    /// own product string to match against it.
+    ignored_products: HashSet<String>,
     on_change: KeyboardBucketCallback,
 }
 
@@ -203,6 +206,22 @@ fn has_real_transport(device: IOHIDDeviceRef) -> bool {
     }
 }
 
+/// `kIOHIDProductKey` — the device's own name for itself, e.g. "Magic
+/// Keyboard". Logged on every match so a device with no other distinguishing
+/// property (a mouse receiver's idle keyboard interface, say) can still be
+/// named in `Config::ignored_keyboard_devices`.
+fn product_name(device: IOHIDDeviceRef) -> Option<String> {
+    let key = CFString::new("Product");
+    unsafe {
+        let value = IOHIDDeviceGetProperty(device, key.as_concrete_TypeRef());
+        if value.is_null() {
+            return None;
+        }
+        let name: CFString = TCFType::wrap_under_get_rule(value as CFStringRef);
+        Some(name.to_string())
+    }
+}
+
 extern "C" fn on_matched(
     context: *mut c_void,
     _result: IOReturn,
@@ -214,6 +233,7 @@ extern "C" fn on_matched(
     // `unwatch` that would free it first.
     let watch = unsafe { &*(context as *const Watch) };
     let built_in = is_built_in(device);
+    let product = product_name(device);
 
     // A non-built-in device is only trusted as "external" if it also arrived
     // over hardware. Anything else (virtual HID drivers, remote-control
@@ -221,7 +241,26 @@ extern "C" fn on_matched(
     if !built_in && !has_real_transport(device) {
         tracing::info!(
             device = device as usize,
+            product = product.as_deref().unwrap_or("?"),
             "ignoring a non-hardware keyboard device"
+        );
+        return;
+    }
+
+    // A device the user has named in `Config::ignored_keyboard_devices` —
+    // typically a mouse receiver's idle keyboard interface, which IOKit
+    // cannot be told apart from a real one by any property it reports. See
+    // the field doc for why this has to be a user-supplied name rather than
+    // a heuristic.
+    if !built_in
+        && product
+            .as_deref()
+            .is_some_and(|name| watch.ignored_products.contains(&name.to_lowercase()))
+    {
+        tracing::info!(
+            device = device as usize,
+            product = product.as_deref().unwrap_or("?"),
+            "ignoring a denylisted keyboard device"
         );
         return;
     }
@@ -234,6 +273,7 @@ extern "C" fn on_matched(
     tracing::info!(
         device = device as usize,
         built_in,
+        product = product.as_deref().unwrap_or("?"),
         ?bucket,
         "keyboard matched"
     );
@@ -267,9 +307,10 @@ impl MacKeyboardWatcher {
 }
 
 impl KeyboardWatcher for MacKeyboardWatcher {
-    fn watch(&self, on_change: KeyboardBucketCallback) -> Result<()> {
+    fn watch(&self, ignored_products: &[String], on_change: KeyboardBucketCallback) -> Result<()> {
         let watch = Arc::new(Watch {
             tracker: Mutex::new(BucketTracker::new()),
+            ignored_products: ignored_products.iter().map(|s| s.to_lowercase()).collect(),
             on_change,
         });
 
