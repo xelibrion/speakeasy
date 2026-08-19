@@ -1,4 +1,7 @@
-.PHONY: help build check test fmt fmt-check lint dev bundle bundle-mac clean boundary
+.PHONY: help build check test fmt fmt-check lint dev bundle bundle-mac clean boundary deploy-mac
+
+# Overridable: make deploy-mac DEPLOY_TARGET=user@host
+DEPLOY_TARGET ?= xelibrion@192.168.4.130
 
 # Must match `bundle.macOS.minimumSystemVersion` in tauri.conf.json. The plist
 # key only tells Finder what to refuse; this is what the Rust and whisper.cpp
@@ -68,6 +71,9 @@ bundle-mac: ## Produce a signed universal .app + .dmg for distribution
 			--bundles app,dmg
 	@echo
 	@echo "bundle: target/universal-apple-darwin/release/bundle/"
+
+deploy-mac: bundle-mac ## Build, ship to DEPLOY_TARGET over SSH, and reinstall there
+	DEPLOY_TARGET=$(DEPLOY_TARGET) ./scripts/deploy-mac.sh
 
 clean:
 	cargo clean
