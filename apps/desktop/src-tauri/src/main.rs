@@ -16,6 +16,7 @@ mod widget;
 use speakeasy_core::{Config, Engine};
 use speakeasy_platform::CpalAudioSource;
 use speakeasy_whisper::{WhisperSegmenter, WhisperTranscriber};
+use tauri::Manager;
 
 /// Config file location. Under the OS config directory rather than next to the
 /// binary, so it survives reinstalling the app.
@@ -200,6 +201,15 @@ fn main() {
             commands::permissions_granted,
             commands::open_permission_settings,
         ])
-        .run(tauri::generate_context!())
-        .expect("tauri application should run");
+        .build(tauri::generate_context!())
+        .expect("tauri application should build")
+        .run(|app_handle, event| {
+            // Fires for every way the process can end — the tray's Quit item,
+            // Cmd+Q, Dock Quit, an AppleScript `quit` — not just the one path
+            // that used to call this. See `Engine::shutdown`: skipping it lets
+            // `exit()` outrun whisper.cpp's own teardown and abort the process.
+            if let tauri::RunEvent::ExitRequested { .. } = event {
+                app_handle.state::<Engine>().shutdown();
+            }
+        });
 }

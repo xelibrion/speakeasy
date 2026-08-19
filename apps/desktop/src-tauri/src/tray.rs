@@ -78,13 +78,11 @@ pub fn attach(app: &AppHandle, engine: &Engine) -> Result<(), Box<dyn std::error
         "speak" => toggle_recording(&engine),
         "cancel" => engine.cancel(),
         "settings" => show_settings(app),
-        "quit" => {
-            // Must run before `exit`, which terminates the process without
-            // giving Rust's `Drop` a chance to free the loaded model — see
-            // `Engine::shutdown`.
-            engine.shutdown();
-            app.exit(0);
-        }
+        // `Engine::shutdown` runs from the app-level `RunEvent::ExitRequested`
+        // handler in `main.rs`, not here — that hook fires for every way the
+        // process can end (this menu item, Cmd+Q, Dock Quit, an AppleScript
+        // `quit`), where a second call site here would only cover one of them.
+        "quit" => app.exit(0),
         _ => {}
     });
 
