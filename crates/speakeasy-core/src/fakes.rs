@@ -19,6 +19,9 @@ pub struct FakeAudio {
     samples: Vec<f32>,
     recording: Mutex<bool>,
     fail_with: Option<Error>,
+    /// What the most recent `start` was asked for, so a test can assert the
+    /// engine forwarded the configured device.
+    requested_device: Mutex<Option<String>>,
 }
 
 impl FakeAudio {
@@ -27,6 +30,7 @@ impl FakeAudio {
             samples,
             recording: Mutex::new(false),
             fail_with: None,
+            requested_device: Mutex::new(None),
         }
     }
 
@@ -36,16 +40,29 @@ impl FakeAudio {
             samples: Vec::new(),
             recording: Mutex::new(false),
             fail_with: Some(error),
+            requested_device: Mutex::new(None),
         }
     }
 
     pub fn is_recording(&self) -> bool {
         *self.recording.lock().expect("recording mutex poisoned")
     }
+
+    /// The device passed to the most recent `start`, if any.
+    pub fn requested_device(&self) -> Option<String> {
+        self.requested_device
+            .lock()
+            .expect("requested device mutex poisoned")
+            .clone()
+    }
 }
 
 impl AudioSource for FakeAudio {
-    fn start(&self) -> Result<()> {
+    fn start(&self, device: Option<&str>) -> Result<()> {
+        *self
+            .requested_device
+            .lock()
+            .expect("requested device mutex poisoned") = device.map(str::to_string);
         if let Some(error) = &self.fail_with {
             return Err(error.clone());
         }
@@ -88,8 +105,8 @@ impl AudioSource for FakeAudio {
 /// So a test can hold an `Arc<FakeAudio>` and ask whether the microphone ever
 /// opened, while the engine owns a `Box<dyn AudioSource>` over the same one.
 impl AudioSource for Arc<FakeAudio> {
-    fn start(&self) -> Result<()> {
-        self.as_ref().start()
+    fn start(&self, device: Option<&str>) -> Result<()> {
+        self.as_ref().start(device)
     }
 
     fn stop(&self) -> Result<Vec<f32>> {
@@ -567,7 +584,7 @@ mod tests {
     #[test]
     fn a_snapshot_leaves_the_recording_running() {
         let audio = FakeAudio::with_samples(vec![0.25; 16_000]);
-        audio.start().expect("start");
+        audio.start(None).expect("start");
 
         let snapshot = audio.snapshot().expect("snapshot");
 

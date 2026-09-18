@@ -95,6 +95,15 @@ pub struct Config {
     /// paste it here for a device that keeps pinning the bucket to
     /// `External` with nothing that looks like a keyboard actually attached.
     pub ignored_keyboard_devices: Vec<String>,
+
+    /// Preferred input device, matched by name against what the audio API
+    /// enumerates. `None` means "the system default".
+    ///
+    /// Kept even when the named device is not currently attached — a USB or
+    /// Bluetooth mic that comes and goes should not have to be re-selected
+    /// every time. [`AudioSource::start`](crate::AudioSource::start) falls
+    /// back to the system default for as long as it is missing.
+    pub input_device: Option<String>,
 }
 
 /// Physical screen coordinates of the widget's top-left corner.
@@ -395,6 +404,7 @@ impl Default for Config {
             transcript_preview: true,
             widget_position: None,
             ignored_keyboard_devices: Vec::new(),
+            input_device: None,
         }
     }
 }

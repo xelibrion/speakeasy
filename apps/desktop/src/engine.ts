@@ -181,6 +181,8 @@ export type Config = {
    * real one, so this has to be a name the user copies out of the log.
    */
   ignoredKeyboardDevices: string[];
+  /** Preferred input device name, or null for the system default. */
+  inputDevice: string | null;
 };
 
 const MODIFIER_LABELS: Record<ModifierKey, string> = {
@@ -288,6 +290,17 @@ export const setConfig = (config: Config) => invoke<void>("set_config", { config
 export const getAudioLevel = () => invoke<number>("audio_level");
 /** `SPECTRUM_BANDS` values, low frequency first. See `core::ports::AudioSource`. */
 export const getAudioSpectrum = () => invoke<number[]>("audio_spectrum");
+
+/** Every microphone the OS currently reports. */
+export const listInputDevices = () => invoke<string[]>("list_input_devices");
+
+/**
+ * What Speakeasy would actually record from right now, given the configured
+ * preference — not necessarily `config.inputDevice`, since a device that has
+ * gone missing falls back to the system default. Null only when no input
+ * device exists at all.
+ */
+export const resolveInputDevice = () => invoke<string | null>("resolve_input_device");
 export const cancel = () => invoke<void>("cancel");
 
 /** The last transcript that reached injection, or null if there is none. */

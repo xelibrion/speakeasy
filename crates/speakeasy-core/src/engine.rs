@@ -340,7 +340,14 @@ impl Engine {
             return Err(err);
         }
 
-        if let Err(err) = self.inner.audio.start() {
+        let device = self
+            .inner
+            .config
+            .lock()
+            .expect("config mutex poisoned")
+            .input_device
+            .clone();
+        if let Err(err) = self.inner.audio.start(device.as_deref()) {
             self.fail(err.clone());
             return Err(err);
         }
@@ -1607,6 +1614,26 @@ mod tests {
                 error: Error::SecureInputActive(ref app)
             } if app == "1Password"
         )));
+    }
+
+    #[test]
+    fn begin_recording_forwards_the_configured_input_device() {
+        let audio = Arc::new(FakeAudio::with_samples(vec![0.0; 16_000]));
+        let engine = Engine::new(
+            Box::new(audio.clone()),
+            Arc::new(FakeTranscriber::returning("never heard")),
+            Box::new(Arc::new(FakeSink::default())),
+            Box::new(FakeFetcher::serving(Vec::new())),
+            unused_models_dir(),
+            Config {
+                input_device: Some("Yeti X".to_string()),
+                ..Config::default()
+            },
+        );
+
+        engine.begin_recording().expect("recording should start");
+
+        assert_eq!(audio.requested_device(), Some("Yeti X".to_string()));
     }
 
     #[test]

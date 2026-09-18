@@ -19,6 +19,18 @@ use speakeasy_core::{Config, HotkeyListener, KeyboardWatcher, TextSink};
 
 pub use audio::CpalAudioSource;
 
+/// Every microphone the OS currently reports.
+pub fn list_input_devices() -> Vec<String> {
+    audio::list_input_devices()
+}
+
+/// What [`CpalAudioSource`] would actually open right now for this
+/// preference — the saved device if it is still attached, otherwise the
+/// system default.
+pub fn resolve_input_device(preferred: Option<&str>) -> Option<String> {
+    audio::resolve_input_device(preferred)
+}
+
 /// The platform's text injector, configured for the chosen strategy.
 pub fn text_sink(config: &Config) -> Box<dyn TextSink> {
     sys::text_sink(config.injection_mode)

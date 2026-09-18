@@ -252,6 +252,17 @@ body {
   transform: translateX(12px);
 }
 
+.select {
+  max-width: 220px;
+  padding: 4px 8px;
+  border: none;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--fg) 6%, var(--bg));
+  box-shadow: inset 0 0 0 0.5px color-mix(in srgb, var(--fg) 18%, transparent);
+  color: var(--fg);
+  font: inherit;
+}
+
 /* --- models ---------------------------------------------------------- */
 
 /* A floor, not a cap: a one-line label and note settle at this height, but a

@@ -146,6 +146,19 @@ pub fn bind_hotkey(engine: TauriState<'_, Engine>) -> Result<(), String> {
 }
 
 #[tauri::command]
+pub fn list_input_devices() -> Vec<String> {
+    speakeasy_platform::list_input_devices()
+}
+
+/// What Speakeasy would actually record from right now, given the configured
+/// preference — not necessarily what is selected, since a missing device
+/// falls back to the system default.
+#[tauri::command]
+pub fn resolve_input_device(engine: TauriState<'_, Engine>) -> Option<String> {
+    speakeasy_platform::resolve_input_device(engine.config().input_device.as_deref())
+}
+
+#[tauri::command]
 pub fn permissions_granted() -> bool {
     speakeasy_platform::permissions_granted()
 }

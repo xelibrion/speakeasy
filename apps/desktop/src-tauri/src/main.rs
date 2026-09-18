@@ -180,6 +180,8 @@ fn main() {
             commands::set_config,
             commands::audio_level,
             commands::audio_spectrum,
+            commands::list_input_devices,
+            commands::resolve_input_device,
             commands::cancel,
             commands::recoverable_transcript,
             commands::copy_transcript,

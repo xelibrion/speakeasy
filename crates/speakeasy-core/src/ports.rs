@@ -19,7 +19,13 @@ use crate::error::Result;
 /// care about device-native rates.
 pub trait AudioSource: Send + Sync {
     /// Begin capturing. Samples accumulate until [`AudioSource::stop`].
-    fn start(&self) -> Result<()>;
+    ///
+    /// `device` names the input device to prefer, matched against whatever
+    /// the platform's audio API calls it. `None`, or a name that is no
+    /// longer attached, falls back to the system default — resolved fresh
+    /// on every call rather than cached, so a device that comes and goes
+    /// (Bluetooth, USB) is picked up without restarting the app.
+    fn start(&self, device: Option<&str>) -> Result<()>;
 
     /// Stop capturing and return everything recorded since `start`.
     fn stop(&self) -> Result<Vec<f32>>;

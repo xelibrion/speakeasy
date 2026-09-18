@@ -31,11 +31,13 @@ import {
   getModelStatus,
   installModel,
   isSelected,
+  listInputDevices,
   onEngineEvent,
   openPermissionSettings,
   permissionsGranted,
   relativeTime,
   removeModel,
+  resolveInputDevice,
   selectModel,
   type Config,
   type Hotkey,
@@ -192,6 +194,13 @@ async function mountDictation(panel: HTMLElement): Promise<void> {
     }),
   );
 
+  const audioGroupLabel = element("div", "grouplabel");
+  audioGroupLabel.textContent = "Audio";
+
+  const device = await inputDeviceRow(config);
+  const audioCard = element("div", "card");
+  audioCard.append(device.element);
+
   const groupLabel = element("div", "grouplabel");
   groupLabel.textContent = "Text insertion";
 
@@ -201,7 +210,7 @@ async function mountDictation(panel: HTMLElement): Promise<void> {
     row("Language", config.language ?? "Auto-detect"),
   );
 
-  panel.append(primary, groupLabel, secondary);
+  panel.append(primary, audioGroupLabel, audioCard, device.note, groupLabel, secondary);
 
   const note = element("p", "note");
   note.textContent = "Insertion and language are not editable yet. Edit config.json to change them.";
@@ -211,6 +220,61 @@ async function mountDictation(panel: HTMLElement): Promise<void> {
     builtIn.release();
     external.release();
   };
+}
+
+type InputDeviceRow = { element: HTMLElement; note: HTMLElement };
+
+/**
+ * The microphone picker, plus a line reporting what is actually in use right
+ * now. The two can disagree — a saved device that has since been unplugged
+ * falls back to the system default — and surfacing that gap is the whole
+ * reason this row exists.
+ */
+async function inputDeviceRow(config: Config): Promise<InputDeviceRow> {
+  const devices = await listInputDevices();
+
+  const line = element("div", "setting");
+  const label = element("span", "setting-label");
+  label.textContent = "Microphone";
+
+  const select = document.createElement("select");
+  select.className = "select";
+
+  const systemDefault = document.createElement("option");
+  systemDefault.value = "";
+  systemDefault.textContent = "System Default";
+  select.append(systemDefault);
+
+  for (const name of devices) {
+    const option = document.createElement("option");
+    option.value = name;
+    option.textContent = name;
+    select.append(option);
+  }
+
+  // Give the saved device its own slot even when it isn't currently
+  // enumerated, so the picker still shows the actual selection instead of
+  // silently falling back to "System Default" in the UI.
+  if (config.inputDevice && !devices.includes(config.inputDevice)) {
+    const missing = document.createElement("option");
+    missing.value = config.inputDevice;
+    missing.textContent = `${config.inputDevice} (not connected)`;
+    select.append(missing);
+  }
+
+  select.value = config.inputDevice ?? "";
+  select.addEventListener("change", () => {
+    void setConfig({ ...config, inputDevice: select.value || null });
+  });
+
+  line.append(label, select);
+
+  const note = element("p", "note");
+  void resolveInputDevice().then((active) => {
+    note.textContent = active ? `Currently using: ${active}` : "No microphone available";
+  });
+
+  return { element: line, note };
 }
 
 type HotkeyRow = { element: HTMLElement; release: () => void };

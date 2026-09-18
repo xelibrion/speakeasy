@@ -35,7 +35,7 @@ struct Capture {
 }
 
 enum Command {
-    Start(SyncSender<Result<()>>),
+    Start(SyncSender<Result<()>>, Option<String>),
     Stop(SyncSender<()>),
 }
 
@@ -73,8 +73,8 @@ fn audio_thread(commands: Receiver<Command>, capture: Arc<Mutex<Capture>>) {
 
     while let Ok(command) = commands.recv() {
         match command {
-            Command::Start(reply) => {
-                let result = build_stream(&capture).and_then(|s| {
+            Command::Start(reply, device) => {
+                let result = build_stream(&capture, device.as_deref()).and_then(|s| {
                     s.play().map_err(|err| {
                         Error::AudioUnavailable(format!("could not start: {err}"))
                     })?;
@@ -105,10 +105,56 @@ fn audio_thread(commands: Receiver<Command>, capture: Arc<Mutex<Capture>>) {
     }
 }
 
-fn build_stream(capture: &Arc<Mutex<Capture>>) -> Result<cpal::Stream> {
-    let device = cpal::default_host()
-        .default_input_device()
+/// Every input device the host currently reports, in enumeration order.
+/// Devices that fail to report a name are skipped rather than surfaced as
+/// `"Unknown"` — nothing selectable can be matched back to them anyway.
+pub fn list_input_devices() -> Vec<String> {
+    match cpal::default_host().input_devices() {
+        Ok(devices) => devices.filter_map(|device| device.name().ok()).collect(),
+        Err(_) => Vec::new(),
+    }
+}
+
+/// The name of whatever [`resolve_device`] would open right now for this
+/// preference, without opening a stream. Lets a settings UI show what is
+/// actually in effect rather than just what was asked for.
+pub fn resolve_input_device(preferred: Option<&str>) -> Option<String> {
+    resolve_device(preferred).and_then(|device| device.name().ok())
+}
+
+/// `preferred` by name if the host still has it, otherwise the system
+/// default. Resolved fresh on every call rather than cached, so a device
+/// that comes and goes is picked up without restarting the app.
+fn resolve_device(preferred: Option<&str>) -> Option<cpal::Device> {
+    let host = cpal::default_host();
+
+    if let Some(name) = preferred {
+        let found = host.input_devices().ok().and_then(|mut devices| {
+            devices.find(|device| device.name().map(|n| n == name).unwrap_or(false))
+        });
+        if found.is_some() {
+            return found;
+        }
+        tracing::warn!(
+            device = name,
+            "saved input device not found, falling back to the system default"
+        );
+    }
+
+    host.default_input_device()
+}
+
+fn build_stream(
+    capture: &Arc<Mutex<Capture>>,
+    preferred_device: Option<&str>,
+) -> Result<cpal::Stream> {
+    let device = resolve_device(preferred_device)
         .ok_or_else(|| Error::AudioUnavailable("no input device".to_string()))?;
+
+    tracing::info!(
+        device = device.name().as_deref().unwrap_or("<unnamed>"),
+        "opening input stream"
+    );
 
     let config = device.default_input_config().map_err(|err| {
         // macOS reports a denied microphone as a config failure rather than
@@ -179,10 +225,10 @@ fn accumulate(capture: &Arc<Mutex<Capture>>, data: &[f32], channels: usize) {
 }
 
 impl AudioSource for CpalAudioSource {
-    fn start(&self) -> Result<()> {
+    fn start(&self, device: Option<&str>) -> Result<()> {
         let (tx, rx) = sync_channel(1);
         self.commands
-            .send(Command::Start(tx))
+            .send(Command::Start(tx, device.map(str::to_string)))
             .map_err(|_| Error::AudioUnavailable("the audio thread has stopped".to_string()))?;
         rx.recv()
             .map_err(|_| Error::AudioUnavailable("the audio thread has stopped".to_string()))?
