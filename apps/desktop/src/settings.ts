@@ -263,16 +263,19 @@ async function inputDeviceRow(config: Config): Promise<InputDeviceRow> {
   }
 
   select.value = config.inputDevice ?? "";
+
+  const note = element("p", "note");
+  const refreshNote = () =>
+    void resolveInputDevice().then((active) => {
+      note.textContent = active ? `Currently using: ${active}` : "No microphone available";
+    });
+
   select.addEventListener("change", () => {
-    void setConfig({ ...config, inputDevice: select.value || null });
+    void setConfig({ ...config, inputDevice: select.value || null }).then(refreshNote);
   });
 
   line.append(label, select);
-
-  const note = element("p", "note");
-  void resolveInputDevice().then((active) => {
-    note.textContent = active ? `Currently using: ${active}` : "No microphone available";
-  });
+  refreshNote();
 
   return { element: line, note };
 }
