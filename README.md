@@ -304,23 +304,29 @@ intended approach in a `TODO`.
   discarded and the retry starts over
 - signing, notarization, auto-update
 
-### Known: Accessibility is re-prompted on every launch
+### Accessibility needs a stably signed build
 
-An installed build asks for Accessibility each time it starts, even with the box
-ticked in System Settings. The app is **ad-hoc signed**, so it has no stable code
-identity for TCC to attach the grant to: the entry is created but does not match
-on the next launch. Clearing quarantine, moving to `/Applications` and
-re-toggling the checkbox all fail, because none of them change the identity.
+macOS keys the Accessibility grant to the app's code signature. An **ad-hoc**
+signed build has no stable identity, so the grant never matches on the next
+launch and the app asks every time. `make deploy-mac` therefore signs with
+`$APPLE_SIGNING_IDENTITY`, or the first Apple Development / Developer ID
+identity in the keychain, and refuses to ship an ad-hoc bundle. A free
+certificate is enough for the grant to stick; a Developer ID adds Gatekeeper
+acceptance and notarization.
 
-Signing with a stable identity fixes it. A free self-signed certificate is
-enough — Keychain Access › Certificate Assistant › Create a Certificate, type
-Code Signing — then build with `APPLE_SIGNING_IDENTITY` set. A Developer ID adds
-Gatekeeper acceptance and notarization, but is not what makes the grant stick.
+When moving a Mac from an ad-hoc build to a signed one, clear the old entries
+first, or the stale row shows as ticked without working:
+
+    tccutil reset Accessibility com.speakeasy.app
+    tccutil reset ListenEvent com.speakeasy.app
 
 **Test this by launching from Finder, never from a terminal.** A binary started
 from a terminal has its TCC requests attributed to Terminal/iTerm, so it reports
 `trusted=true` whenever the terminal has Accessibility — regardless of whether
 the app itself was ever granted anything.
+
+`make deploy-mac` also installs a LaunchAgent (`com.speakeasy.app.autostart`)
+so the app starts at every login.
 
 `icons/icon.png` and `icons/tray.png` are generated placeholders — flat colour
 squares, enough to satisfy `generate_context!`. Replace before shipping.
