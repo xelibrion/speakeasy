@@ -51,3 +51,9 @@ core-foundation = "0.10"
 lto = true
 codegen-units = 1
 strip = true
+
+# Proc-macro dylibs and build scripts run on the build machine and never ship.
+# Stripping them with Xcode 27's linker leaves a mis-aligned LINKEDIT string
+# pool, so rustc fails to dlopen them ("can't find crate for serde_derive").
+[profile.release.build-override]
+strip = false

@@ -1,7 +1,7 @@
 .PHONY: help build check test fmt fmt-check lint dev bundle bundle-mac clean boundary deploy-mac
 
 # Overridable: make deploy-mac DEPLOY_TARGET=user@host
-DEPLOY_TARGET ?= xelibrion@192.168.4.130
+DEPLOY_TARGET ?= xelibrion@mbp14-fresho.local
 
 # Must match `bundle.macOS.minimumSystemVersion` in tauri.conf.json. The plist
 # key only tells Finder what to refuse; this is what the Rust and whisper.cpp
@@ -72,7 +72,21 @@ bundle-mac: ## Produce a signed universal .app + .dmg for distribution
 	@echo
 	@echo "bundle: target/universal-apple-darwin/release/bundle/"
 
-deploy-mac: bundle-mac ## Build, ship to DEPLOY_TARGET over SSH, and reinstall there
+# Signs with $APPLE_SIGNING_IDENTITY, else the first Apple Development or
+# Developer ID identity in the keychain. Refuses to ship an ad-hoc build, since
+# that is what makes Accessibility re-prompt on every launch.
+deploy-mac: ## Build signed, ship to DEPLOY_TARGET over SSH, reinstall, and start at login
+	@identity="$${APPLE_SIGNING_IDENTITY:-$$(security find-identity -v -p codesigning | sed -nE 's/.*"((Apple Development|Developer ID Application): [^"]*)".*/\1/p' | head -1)}"; \
+	if [ -z "$$identity" ]; then \
+		echo "ERROR: no code-signing identity found. Set APPLE_SIGNING_IDENTITY."; \
+		exit 1; \
+	fi; \
+	echo "signing with: $$identity"; \
+	APPLE_SIGNING_IDENTITY="$$identity" $(MAKE) bundle-mac && \
+	if codesign -dv target/universal-apple-darwin/release/bundle/macos/Speakeasy.app 2>&1 | grep -q 'Signature=adhoc'; then \
+		echo "ERROR: bundle is ad-hoc signed despite identity '$$identity'"; \
+		exit 1; \
+	fi && \
 	DEPLOY_TARGET=$(DEPLOY_TARGET) ./scripts/deploy-mac.sh
 
 clean:
